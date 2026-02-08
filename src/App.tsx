@@ -196,13 +196,8 @@ function TabNav({ tabs, activeTab, setActiveTab, darkMode }) {
 // Transaction Cost Calculator with Baseline/Projected/Clients
 function TransactionCostCalculator({ darkMode, supabase, userEmail }) {
   const [eurToUsd, setEurToUsd] = useState(1.08);
-  const [scenarioName, setScenarioName] = useState('');
-  const [savedScenarios, setSavedScenarios] = useState([]);
   const [saveStatus, setSaveStatus] = useState('');
-  const [currentScenarioId, setCurrentScenarioId] = useState(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState([]);
-  const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
   
   // BASELINE (2025)
   const [baselineYear, setBaselineYear] = useState('2025');
