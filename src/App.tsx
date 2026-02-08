@@ -1,5 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Trash2, Plus, Calculator, CreditCard, Smartphone, Users, Clock, Code, Save, History, Download, Lock, Eye, EyeOff, Sun, Moon, Upload, FileText } from 'lucide-react';
+import { Trash2, Plus, Calculator, CreditCard, Smartphone, Users, Clock, Code, Save, History, Download, Lock, Eye, EyeOff, Sun, Moon, Upload, FileText, Cloud, CloudOff } from 'lucide-react';
+import { createClient } from '@supabase/supabase-js';
+
+// Supabase client
+const supabase = createClient(
+  'https://eyymiqrxofswwammwffx.supabase.co',
+  'sb_publishable_bQTk9wute0V1Kn7PQnID2Q_8srHSTsb'
+);
 
 // Password Gate Component
 function PasswordGate({ onSuccess, darkMode, setDarkMode }) {
@@ -723,6 +730,8 @@ function StoryPointsCalculator({ darkMode }) {
   const [lastSaved, setLastSaved] = useState(null);
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [showSprintPreview, setShowSprintPreview] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('idle'); // 'idle', 'syncing', 'synced', 'error'
+  const [sprintId, setSprintId] = useState(null);
   
   const cardBg = darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200';
   const cardText = darkMode ? 'text-white' : 'text-gray-800';
@@ -785,56 +794,129 @@ function StoryPointsCalculator({ darkMode }) {
     yellow: { name: '', storyPoints: '' },
   });
 
-  // Load draft on mount
+  // Load from Supabase on mount
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('sprintCalculatorDraft');
-      if (saved) {
-        const data = JSON.parse(saved);
-        if (data.teams) setTeams(data.teams);
-        if (data.sprintName) setSprintName(data.sprintName);
-        if (data.costPerSP) setCostPerSP(data.costPerSP);
-        if (data.sprintHistory) setSprintHistory(data.sprintHistory);
-        if (data.savedAt) setLastSaved(new Date(data.savedAt));
+    const loadFromSupabase = async () => {
+      try {
+        setSyncStatus('syncing');
+        const { data, error } = await supabase
+          .from('sprints')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+          const sprint = data[0];
+          setSprintId(sprint.id);
+          if (sprint.name) setSprintName(sprint.name);
+          if (sprint.cost_per_sp) setCostPerSP(sprint.cost_per_sp);
+          if (sprint.teams) setTeams(sprint.teams);
+          setLastSaved(new Date(sprint.created_at));
+        }
+        setSyncStatus('synced');
+      } catch (e) {
+        console.error('Failed to load from Supabase:', e);
+        setSyncStatus('error');
+        // Fallback to localStorage
+        try {
+          const saved = localStorage.getItem('sprintCalculatorDraft');
+          if (saved) {
+            const localData = JSON.parse(saved);
+            if (localData.teams) setTeams(localData.teams);
+            if (localData.sprintName) setSprintName(localData.sprintName);
+            if (localData.costPerSP) setCostPerSP(localData.costPerSP);
+          }
+        } catch (le) {
+          console.error('Failed to load local draft:', le);
+        }
       }
-    } catch (e) {
-      console.error('Failed to load draft:', e);
-    }
+    };
+    loadFromSupabase();
   }, []);
 
-  // Save draft function
-  const saveDraft = () => {
+  // Save to Supabase
+  const saveDraft = async () => {
     try {
-      const data = {
-        teams,
-        sprintName,
-        costPerSP,
-        sprintHistory,
-        savedAt: new Date().toISOString()
+      setSyncStatus('syncing');
+      const sprintData = {
+        name: sprintName,
+        cost_per_sp: costPerSP,
+        teams: teams,
       };
-      localStorage.setItem('sprintCalculatorDraft', JSON.stringify(data));
+      
+      let result;
+      if (sprintId) {
+        // Update existing
+        result = await supabase
+          .from('sprints')
+          .update(sprintData)
+          .eq('id', sprintId)
+          .select();
+      } else {
+        // Insert new
+        result = await supabase
+          .from('sprints')
+          .insert(sprintData)
+          .select();
+      }
+      
+      if (result.error) throw result.error;
+      
+      if (result.data && result.data[0]) {
+        setSprintId(result.data[0].id);
+      }
+      
+      // Also save to localStorage as backup
+      localStorage.setItem('sprintCalculatorDraft', JSON.stringify({
+        teams, sprintName, costPerSP, sprintHistory, savedAt: new Date().toISOString()
+      }));
+      
       setLastSaved(new Date());
+      setSyncStatus('synced');
       setShowSaveConfirm(true);
       setTimeout(() => setShowSaveConfirm(false), 2000);
     } catch (e) {
-      console.error('Failed to save draft:', e);
+      console.error('Failed to save to Supabase:', e);
+      setSyncStatus('error');
+      // Save to localStorage as fallback
+      try {
+        localStorage.setItem('sprintCalculatorDraft', JSON.stringify({
+          teams, sprintName, costPerSP, sprintHistory, savedAt: new Date().toISOString()
+        }));
+        setLastSaved(new Date());
+        setShowSaveConfirm(true);
+        setTimeout(() => setShowSaveConfirm(false), 2000);
+      } catch (le) {
+        console.error('Failed to save locally:', le);
+      }
     }
   };
 
   // Clear draft function
-  const clearDraft = () => {
+  const clearDraft = async () => {
     if (confirm('Clear all saved data? This cannot be undone.')) {
-      localStorage.removeItem('sprintCalculatorDraft');
-      setLastSaved(null);
-      // Reset to defaults
-      setTeams([
-        { id: 'red', name: 'Red', color: 'bg-red-500', colorLight: 'bg-red-50', colorText: 'text-red-500', features: [] },
-        { id: 'green', name: 'Green', color: 'bg-green-500', colorLight: 'bg-green-50', colorText: 'text-green-500', features: [] },
-        { id: 'blue', name: 'Blue', color: 'bg-blue-500', colorLight: 'bg-blue-50', colorText: 'text-blue-500', features: [] },
-        { id: 'yellow', name: 'Yellow', color: 'bg-yellow-500', colorLight: 'bg-yellow-50', colorText: 'text-yellow-500', features: [] },
-      ]);
-      setSprintHistory([]);
-      setSprintName('Sprint 1');
+      try {
+        if (sprintId) {
+          await supabase.from('sprints').delete().eq('id', sprintId);
+        }
+        localStorage.removeItem('sprintCalculatorDraft');
+        setSprintId(null);
+        setLastSaved(null);
+        // Reset to defaults
+        setTeams([
+          { id: 'red', name: 'Red', color: 'bg-red-500', colorLight: 'bg-red-50', colorText: 'text-red-500', features: [] },
+          { id: 'green', name: 'Green', color: 'bg-green-500', colorLight: 'bg-green-50', colorText: 'text-green-500', features: [] },
+          { id: 'blue', name: 'Blue', color: 'bg-blue-500', colorLight: 'bg-blue-50', colorText: 'text-blue-500', features: [] },
+          { id: 'yellow', name: 'Yellow', color: 'bg-yellow-500', colorLight: 'bg-yellow-50', colorText: 'text-yellow-500', features: [] },
+        ]);
+        setSprintHistory([]);
+        setSprintName('Sprint 1');
+        setSyncStatus('idle');
+      } catch (e) {
+        console.error('Failed to clear:', e);
+      }
     }
   };
 
@@ -1425,6 +1507,24 @@ function StoryPointsCalculator({ darkMode }) {
               <Save className="w-4 h-4" />
               Save Draft
             </button>
+            {syncStatus === 'syncing' && (
+              <span className="flex items-center gap-1 text-xs text-blue-500">
+                <Cloud className="w-4 h-4 animate-pulse" />
+                Syncing...
+              </span>
+            )}
+            {syncStatus === 'synced' && (
+              <span className="flex items-center gap-1 text-xs text-green-500">
+                <Cloud className="w-4 h-4" />
+                Synced
+              </span>
+            )}
+            {syncStatus === 'error' && (
+              <span className="flex items-center gap-1 text-xs text-red-500">
+                <CloudOff className="w-4 h-4" />
+                Offline
+              </span>
+            )}
             {lastSaved && (
               <span className={`text-xs ${labelText}`}>
                 Last saved: {lastSaved.toLocaleTimeString()}
@@ -2032,6 +2132,9 @@ function ClientProposalCalculator({ darkMode }) {
   const [margin, setMargin] = useState(20);
   const [notes, setNotes] = useState('');
   const [showPreview, setShowPreview] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('idle');
+  const [proposalId, setProposalId] = useState(null);
+  const [lastSaved, setLastSaved] = useState(null);
   
   const cardBg = darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200';
   const cardText = darkMode ? 'text-white' : 'text-gray-800';
@@ -2057,6 +2160,88 @@ function ClientProposalCalculator({ darkMode }) {
   ]);
 
   const [expandedFeature, setExpandedFeature] = useState(1);
+
+  // Load from Supabase on mount
+  useEffect(() => {
+    const loadFromSupabase = async () => {
+      try {
+        setSyncStatus('syncing');
+        const { data, error } = await supabase
+          .from('proposals')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+          const proposal = data[0];
+          setProposalId(proposal.id);
+          if (proposal.client_name) setClientName(proposal.client_name);
+          if (proposal.valid_until) setValidUntil(proposal.valid_until);
+          if (proposal.margin) setMargin(proposal.margin);
+          if (proposal.features) setFeatures(proposal.features);
+          if (proposal.notes) setNotes(proposal.notes);
+          setLastSaved(new Date(proposal.created_at));
+        }
+        setSyncStatus('synced');
+      } catch (e) {
+        console.error('Failed to load from Supabase:', e);
+        setSyncStatus('error');
+      }
+    };
+    loadFromSupabase();
+  }, []);
+
+  // Save to Supabase
+  const saveProposal = async () => {
+    try {
+      setSyncStatus('syncing');
+      const proposalData = {
+        client_name: clientName,
+        valid_until: validUntil,
+        margin: margin,
+        features: features,
+        notes: notes,
+      };
+      
+      let result;
+      if (proposalId) {
+        result = await supabase
+          .from('proposals')
+          .update(proposalData)
+          .eq('id', proposalId)
+          .select();
+      } else {
+        result = await supabase
+          .from('proposals')
+          .insert(proposalData)
+          .select();
+      }
+      
+      if (result.error) throw result.error;
+      
+      if (result.data && result.data[0]) {
+        setProposalId(result.data[0].id);
+      }
+      
+      setLastSaved(new Date());
+      setSyncStatus('synced');
+    } catch (e) {
+      console.error('Failed to save to Supabase:', e);
+      setSyncStatus('error');
+    }
+  };
+
+  // Auto-save on changes (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (clientName || features.length > 0) {
+        saveProposal();
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [clientName, validUntil, margin, features, notes]);
 
   const calculateFeatureCost = (feature) => {
     return feature.team.reduce((sum, m) => sum + (m.hours * m.rate), 0);
@@ -2595,9 +2780,29 @@ function ClientProposalCalculator({ darkMode }) {
       {/* Actions */}
       <div className={`rounded-xl p-4 shadow-sm border ${cardBg}`}>
         <div className="flex flex-wrap gap-3 justify-between items-center">
-          <div className={`text-sm ${labelText}`}>
-            {clientName && <span className={cardText}><strong>{clientName}</strong> • </span>}
-            {features.length} feature{features.length !== 1 ? 's' : ''} • {fmt(totalHours)} hours • Valid until {new Date(validUntil).toLocaleDateString()}
+          <div className="flex items-center gap-3">
+            <div className={`text-sm ${labelText}`}>
+              {clientName && <span className={cardText}><strong>{clientName}</strong> • </span>}
+              {features.length} feature{features.length !== 1 ? 's' : ''} • {fmt(totalHours)} hours • Valid until {new Date(validUntil).toLocaleDateString()}
+            </div>
+            {syncStatus === 'syncing' && (
+              <span className="flex items-center gap-1 text-xs text-blue-500">
+                <Cloud className="w-4 h-4 animate-pulse" />
+                Syncing...
+              </span>
+            )}
+            {syncStatus === 'synced' && (
+              <span className="flex items-center gap-1 text-xs text-green-500">
+                <Cloud className="w-4 h-4" />
+                Synced
+              </span>
+            )}
+            {syncStatus === 'error' && (
+              <span className="flex items-center gap-1 text-xs text-red-500">
+                <CloudOff className="w-4 h-4" />
+                Offline
+              </span>
+            )}
           </div>
           <button
             onClick={() => setShowPreview(true)}
