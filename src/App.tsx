@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Trash2, Plus, Calculator, CreditCard, Smartphone, Users, Clock, Code, Save, History, Download, Lock, Eye, EyeOff, Sun, Moon, Upload, FileText, Cloud, CloudOff } from 'lucide-react';
+import { Trash2, Plus, Calculator, CreditCard, Smartphone, Users, Clock, Code, Save, History, Download, Lock, Eye, EyeOff, Sun, Moon, Upload, FileText, Cloud, CloudOff, TrendingUp, ArrowRight, Copy, FolderOpen, Target, ChevronDown, ChevronUp } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 // Supabase client
@@ -138,287 +138,744 @@ function TabNav({ tabs, activeTab, setActiveTab, darkMode }) {
   );
 }
 
-// Transaction Cost Calculator
-function TransactionCostCalculator({ darkMode }) {
-  const [costs, setCosts] = useState([
-    { id: 1, name: 'AWS', amount: 12625, currency: 'USD' },
-    { id: 2, name: 'Hetzner', amount: 485, currency: 'EUR' },
-    { id: 3, name: 'Grafana', amount: 171, currency: 'USD' },
-    { id: 4, name: 'Mailgun', amount: 32, currency: 'EUR' },
-  ]);
-
-  const [totalTransactions, setTotalTransactions] = useState(2824717);
+// Transaction Cost Calculator with Baseline/Projected/Clients
+function TransactionCostCalculator({ darkMode, supabase, userEmail }) {
   const [eurToUsd, setEurToUsd] = useState(1.08);
-  const [yourPriceEur, setYourPriceEur] = useState(0.0125);
-  const [newCost, setNewCost] = useState({ name: '', amount: '', currency: 'USD' });
-
-  const [methods, setMethods] = useState([
-    { id: 'cards', name: 'Cards', volumePct: 75, conversionRate: 72, icon: 'card' },
-    { id: 'apple', name: 'Apple Pay', volumePct: 15, conversionRate: 92, icon: 'apple' },
-    { id: 'google', name: 'Google Pay', volumePct: 10, conversionRate: 88, icon: 'google' },
+  const [scenarioName, setScenarioName] = useState('');
+  const [savedScenarios, setSavedScenarios] = useState([]);
+  const [saveStatus, setSaveStatus] = useState('');
+  const [currentScenarioId, setCurrentScenarioId] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+  
+  // BASELINE (2025)
+  const [baselineYear, setBaselineYear] = useState('2025');
+  const [baselineAnnualTxn, setBaselineAnnualTxn] = useState(48000000);
+  const [baselineConversionRate, setBaselineConversionRate] = useState(75);
+  const [baselineCosts, setBaselineCosts] = useState([
+    { id: 1, name: 'AWS (base servers)', amount: 8000, currency: 'USD', type: 'fixed' },
+    { id: 2, name: 'AWS (auto-scaling)', amount: 4625, currency: 'USD', type: 'tiered', tiers: [
+      { upTo: 6000000, amount: 4625 },
+      { upTo: 10000000, amount: 7500 },
+      { upTo: 15000000, amount: 11000 },
+      { upTo: Infinity, amount: 15000 },
+    ]},
+    { id: 3, name: 'Hetzner', amount: 485, currency: 'EUR', type: 'fixed' },
+    { id: 4, name: 'Grafana', amount: 171, currency: 'USD', type: 'variable' },
+    { id: 5, name: 'Mailgun', amount: 32, currency: 'EUR', type: 'variable' },
+    { id: 6, name: 'Dev Team (3 devs)', amount: 25000, currency: 'EUR', type: 'fixed' },
   ]);
+  
+  // PROJECTED (2026)
+  const [projectedYear, setProjectedYear] = useState('2026');
+  const [projectedConversionRate, setProjectedConversionRate] = useState(78);
+  const [projectedCosts, setProjectedCosts] = useState([
+    { id: 1, name: 'AWS (base servers)', amount: 10000, currency: 'USD', type: 'fixed' },
+    { id: 2, name: 'AWS (auto-scaling)', amount: 4625, currency: 'USD', type: 'tiered', tiers: [
+      { upTo: 6000000, amount: 4625 },
+      { upTo: 10000000, amount: 7500 },
+      { upTo: 15000000, amount: 11000 },
+      { upTo: Infinity, amount: 15000 },
+    ]},
+    { id: 3, name: 'Hetzner', amount: 485, currency: 'EUR', type: 'fixed' },
+    { id: 4, name: 'Grafana', amount: 200, currency: 'USD', type: 'variable' },
+    { id: 5, name: 'Mailgun', amount: 32, currency: 'EUR', type: 'variable' },
+    { id: 6, name: 'Dev Team (5 devs)', amount: 42000, currency: 'EUR', type: 'fixed' },
+  ]);
+  
+  const [newBaselineCost, setNewBaselineCost] = useState({ name: '', amount: '', currency: 'EUR', type: 'fixed' });
+  const [newProjectedCost, setNewProjectedCost] = useState({ name: '', amount: '', currency: 'EUR', type: 'fixed' });
+  
+  // MULTIPLE CLIENTS
+  const [clients, setClients] = useState([
+    { id: 1, name: 'Client A', monthlyTxn: 4000000, conversionRate: 75, price: 0.01, pricingModel: 'perAttempt' },
+  ]);
+  
+  // TARGET MARGIN CALCULATOR
+  const [targetMargin, setTargetMargin] = useState(30);
 
-  const totalMonthlyUSD = costs.reduce((sum, cost) => {
-    return sum + (cost.currency === 'EUR' ? cost.amount * eurToUsd : cost.amount);
-  }, 0);
-  const totalMonthlyEUR = totalMonthlyUSD / eurToUsd;
-
-  const methodsWithCalcs = methods.map(method => {
-    const attempts = Math.round(totalTransactions * method.volumePct / 100);
-    const successful = Math.round(attempts * method.conversionRate / 100);
-    const costShare = totalMonthlyEUR * (method.volumePct / 100);
-    const costPerSuccessful = successful > 0 ? costShare / successful : 0;
-    const margin = yourPriceEur - costPerSuccessful;
-    const marginPct = yourPriceEur > 0 ? (margin / yourPriceEur) * 100 : 0;
-    return { ...method, attempts, successful, costShare, costPerSuccessful, margin, marginPct };
-  });
-
-  const totalAttempts = methodsWithCalcs.reduce((sum, m) => sum + m.attempts, 0);
-  const totalSuccessful = methodsWithCalcs.reduce((sum, m) => sum + m.successful, 0);
-  const blendedConversion = totalAttempts > 0 ? (totalSuccessful / totalAttempts) * 100 : 0;
-  const blendedCostPerSuccessful = totalSuccessful > 0 ? totalMonthlyEUR / totalSuccessful : 0;
-  const blendedMargin = yourPriceEur - blendedCostPerSuccessful;
-  const blendedMarginPct = yourPriceEur > 0 ? (blendedMargin / yourPriceEur) * 100 : 0;
-
-  const updateMethod = (id, field, value) => {
-    setMethods(methods.map(m => m.id === id ? { ...m, [field]: parseFloat(value) || 0 } : m));
+  // Helper functions
+  const toEur = (amount, currency) => currency === 'USD' ? amount / eurToUsd : amount;
+  const fmt = (val, dec = 2) => new Intl.NumberFormat('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(val);
+  const fmtNum = (val) => new Intl.NumberFormat('en-US').format(Math.round(val));
+  const fmtM = (val) => {
+    if (val >= 1000000) return fmt(val / 1000000, 1) + 'M';
+    if (val >= 1000) return fmt(val / 1000, 0) + 'K';
+    return fmtNum(val);
   };
 
-  const updateCost = (id, field, value) => {
-    setCosts(costs.map(c => c.id === id ? { ...c, [field]: field === 'amount' ? parseFloat(value) || 0 : value } : c));
-  };
+  // Load saved scenarios on mount
+  useEffect(() => {
+    if (supabase) loadScenarios();
+  }, [supabase]);
 
-  const deleteCost = (id) => setCosts(costs.filter(c => c.id !== id));
-
-  const addCost = () => {
-    if (newCost.name && newCost.amount) {
-      setCosts([...costs, { ...newCost, id: Date.now(), amount: parseFloat(newCost.amount) }]);
-      setNewCost({ name: '', amount: '', currency: 'USD' });
+  const loadScenarios = async () => {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase.from('cost_scenarios').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      setSavedScenarios(data || []);
+    } catch (err) {
+      console.error('Error loading scenarios:', err);
     }
   };
 
-  const fmt = (val, dec = 2) => new Intl.NumberFormat('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(val);
-  const fmtNum = (val) => new Intl.NumberFormat('en-US').format(val);
+  const loadHistory = async (scenarioId) => {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase.from('cost_scenario_history').select('*').eq('scenario_id', scenarioId).order('version_number', { ascending: false });
+      if (error) throw error;
+      setHistory(data || []);
+    } catch (err) {
+      console.error('Error loading history:', err);
+    }
+  };
 
+  const generateChangeSummary = (oldData, newData) => {
+    const changes = [];
+    if (!oldData) return 'Initial version';
+    if (oldData.baselineAnnualTxn !== newData.baselineAnnualTxn) changes.push(`Baseline volume: ${fmtM(oldData.baselineAnnualTxn)} → ${fmtM(newData.baselineAnnualTxn)}`);
+    if (oldData.baselineConversionRate !== newData.baselineConversionRate) changes.push(`Baseline conversion: ${oldData.baselineConversionRate}% → ${newData.baselineConversionRate}%`);
+    if (oldData.projectedConversionRate !== newData.projectedConversionRate) changes.push(`Projected conversion: ${oldData.projectedConversionRate}% → ${newData.projectedConversionRate}%`);
+    const oldClientCount = oldData.clients?.length || 0;
+    const newClientCount = newData.clients?.length || 0;
+    if (oldClientCount !== newClientCount) changes.push(`Clients: ${oldClientCount} → ${newClientCount}`);
+    if (oldData.targetMargin !== newData.targetMargin) changes.push(`Target margin: ${oldData.targetMargin}% → ${newData.targetMargin}%`);
+    return changes.length > 0 ? changes.join('; ') : 'Minor updates';
+  };
+
+  const saveScenario = async () => {
+    if (!supabase || !scenarioName.trim()) {
+      setSaveStatus('Please enter a scenario name');
+      return;
+    }
+    try {
+      setSaveStatus('Saving...');
+      const scenarioData = {
+        eurToUsd, baselineYear, baselineAnnualTxn, baselineConversionRate,
+        baselineCosts: baselineCosts.map(c => ({ ...c, tiers: c.tiers?.map(t => ({ ...t, upTo: t.upTo === Infinity ? 'Infinity' : t.upTo })) })),
+        projectedYear, projectedConversionRate,
+        projectedCosts: projectedCosts.map(c => ({ ...c, tiers: c.tiers?.map(t => ({ ...t, upTo: t.upTo === Infinity ? 'Infinity' : t.upTo })) })),
+        clients, targetMargin,
+      };
+
+      const existingScenario = savedScenarios.find(s => s.name === scenarioName);
+      
+      if (existingScenario) {
+        await supabase.from('cost_scenarios').update({ data: scenarioData, updated_at: new Date().toISOString(), updated_by: userEmail || 'Unknown' }).eq('id', existingScenario.id);
+        const { data: latestVersion } = await supabase.from('cost_scenario_history').select('version_number').eq('scenario_id', existingScenario.id).order('version_number', { ascending: false }).limit(1);
+        const newVersionNumber = (latestVersion?.[0]?.version_number || 0) + 1;
+        const changeSummary = generateChangeSummary(existingScenario.data, scenarioData);
+        await supabase.from('cost_scenario_history').insert([{ scenario_id: existingScenario.id, version_number: newVersionNumber, data: scenarioData, changed_by: userEmail || 'Unknown', changed_by_email: userEmail, change_summary: changeSummary }]);
+        setCurrentScenarioId(existingScenario.id);
+        setSaveStatus(`Saved v${newVersionNumber}!`);
+      } else {
+        const { data: newScenario } = await supabase.from('cost_scenarios').insert([{ name: scenarioName, data: scenarioData, created_by: userEmail || 'Unknown', updated_by: userEmail || 'Unknown' }]).select().single();
+        await supabase.from('cost_scenario_history').insert([{ scenario_id: newScenario.id, version_number: 1, data: scenarioData, changed_by: userEmail || 'Unknown', changed_by_email: userEmail, change_summary: 'Initial version' }]);
+        setCurrentScenarioId(newScenario.id);
+        setSaveStatus('Created!');
+      }
+      loadScenarios();
+      setTimeout(() => setSaveStatus(''), 2000);
+    } catch (err) {
+      console.error('Error saving:', err);
+      setSaveStatus('Error saving');
+    }
+  };
+
+  const loadScenario = (scenario) => {
+    const d = scenario.data;
+    setEurToUsd(d.eurToUsd); setBaselineYear(d.baselineYear); setBaselineAnnualTxn(d.baselineAnnualTxn); setBaselineConversionRate(d.baselineConversionRate);
+    setBaselineCosts(d.baselineCosts.map(c => ({ ...c, tiers: c.tiers?.map(t => ({ ...t, upTo: t.upTo === 'Infinity' ? Infinity : t.upTo })) })));
+    setProjectedYear(d.projectedYear); setProjectedConversionRate(d.projectedConversionRate);
+    setProjectedCosts(d.projectedCosts.map(c => ({ ...c, tiers: c.tiers?.map(t => ({ ...t, upTo: t.upTo === 'Infinity' ? Infinity : t.upTo })) })));
+    setClients(d.clients); setTargetMargin(d.targetMargin); setScenarioName(scenario.name); setCurrentScenarioId(scenario.id);
+    loadHistory(scenario.id);
+  };
+
+  const loadHistoryVersion = (historyItem) => {
+    const d = historyItem.data;
+    setEurToUsd(d.eurToUsd); setBaselineYear(d.baselineYear); setBaselineAnnualTxn(d.baselineAnnualTxn); setBaselineConversionRate(d.baselineConversionRate);
+    setBaselineCosts(d.baselineCosts.map(c => ({ ...c, tiers: c.tiers?.map(t => ({ ...t, upTo: t.upTo === 'Infinity' ? Infinity : t.upTo })) })));
+    setProjectedYear(d.projectedYear); setProjectedConversionRate(d.projectedConversionRate);
+    setProjectedCosts(d.projectedCosts.map(c => ({ ...c, tiers: c.tiers?.map(t => ({ ...t, upTo: t.upTo === 'Infinity' ? Infinity : t.upTo })) })));
+    setClients(d.clients); setTargetMargin(d.targetMargin);
+  };
+
+  const deleteScenario = async (id) => {
+    if (!supabase) return;
+    try {
+      await supabase.from('cost_scenarios').delete().eq('id', id);
+      loadScenarios();
+      if (currentScenarioId === id) { setCurrentScenarioId(null); setScenarioName(''); setHistory([]); }
+    } catch (err) {
+      console.error('Error deleting:', err);
+    }
+  };
+
+  // Cost calculation functions
+  const getTieredAmount = (cost, monthlyVolume) => {
+    if (cost.type !== 'tiered' || !cost.tiers) return cost.amount;
+    const tier = cost.tiers.find(t => monthlyVolume <= t.upTo);
+    return tier ? tier.amount : cost.tiers[cost.tiers.length - 1].amount;
+  };
+  
+  const getCurrentTierIndex = (cost, monthlyVolume) => {
+    if (cost.type !== 'tiered' || !cost.tiers) return -1;
+    return cost.tiers.findIndex(t => monthlyVolume <= t.upTo);
+  };
+  
+  const calculateCosts = (costs, monthlyVolume) => {
+    let fixed = 0, variable = 0, tiered = 0;
+    costs.forEach(c => {
+      const amount = c.type === 'tiered' ? getTieredAmount(c, monthlyVolume) : c.amount;
+      const amountEur = toEur(amount, c.currency);
+      if (c.type === 'fixed') fixed += amountEur;
+      else if (c.type === 'variable') variable += amountEur;
+      else if (c.type === 'tiered') tiered += amountEur;
+    });
+    return { fixed, variable, tiered, total: fixed + variable + tiered };
+  };
+
+  // BASELINE calculations
+  const baselineMonthlyTxn = baselineAnnualTxn / 12;
+  const baselineMonthly = calculateCosts(baselineCosts, baselineMonthlyTxn);
+  const baselineSuccessfulTxn = Math.round(baselineMonthlyTxn * baselineConversionRate / 100);
+  const baselineCostPerTxn = baselineMonthlyTxn > 0 ? baselineMonthly.total / baselineMonthlyTxn : 0;
+  const baselineCostPerSuccess = baselineSuccessfulTxn > 0 ? baselineMonthly.total / baselineSuccessfulTxn : 0;
+  const baselineVariableCostPerTxn = baselineMonthlyTxn > 0 ? (baselineMonthly.variable + baselineMonthly.tiered) / baselineMonthlyTxn : 0;
+  const baselineVariableCostPerSuccess = baselineSuccessfulTxn > 0 ? (baselineMonthly.variable + baselineMonthly.tiered) / baselineSuccessfulTxn : 0;
+  
+  // PROJECTED calculations
+  const projectedMonthly = calculateCosts(projectedCosts, baselineMonthlyTxn);
+  const projectedSuccessfulTxn = Math.round(baselineMonthlyTxn * projectedConversionRate / 100);
+  const projectedCostPerTxn = baselineMonthlyTxn > 0 ? projectedMonthly.total / baselineMonthlyTxn : 0;
+  const projectedCostPerSuccess = projectedSuccessfulTxn > 0 ? projectedMonthly.total / projectedSuccessfulTxn : 0;
+  const projectedVariableCostPerTxn = baselineMonthlyTxn > 0 ? (projectedMonthly.variable + projectedMonthly.tiered) / baselineMonthlyTxn : 0;
+  const projectedVariableCostPerSuccess = projectedSuccessfulTxn > 0 ? (projectedMonthly.variable + projectedMonthly.tiered) / projectedSuccessfulTxn : 0;
+  
+  // MULTIPLE CLIENTS - Calculate cumulative impact
+  const calculateClientMetrics = () => {
+    let cumulativeVolume = baselineMonthlyTxn;
+    return clients.map((client) => {
+      const newCumulativeVolume = cumulativeVolume + client.monthlyTxn;
+      const newCosts = calculateCosts(projectedCosts, newCumulativeVolume);
+      const scaleFactor = newCumulativeVolume / baselineMonthlyTxn;
+      const scaledVariableCosts = projectedMonthly.variable * scaleFactor;
+      const newTieredCosts = newCosts.tiered;
+      const totalCostsAtNewVolume = projectedMonthly.fixed + scaledVariableCosts + newTieredCosts;
+      
+      const prevScaleFactor = cumulativeVolume / baselineMonthlyTxn;
+      const prevScaledVariable = projectedMonthly.variable * prevScaleFactor;
+      const prevTiered = calculateCosts(projectedCosts, cumulativeVolume).tiered;
+      const prevTotal = projectedMonthly.fixed + prevScaledVariable + prevTiered;
+      
+      const incrementalVariable = scaledVariableCosts - prevScaledVariable;
+      const incrementalTiered = newTieredCosts - prevTiered;
+      const incrementalTotal = totalCostsAtNewVolume - prevTotal;
+      const marginalCostPerTxn = client.monthlyTxn > 0 ? incrementalTotal / client.monthlyTxn : 0;
+      
+      const successfulTxn = Math.round(client.monthlyTxn * client.conversionRate / 100);
+      const revenue = client.pricingModel === 'perAttempt' ? client.price * client.monthlyTxn : client.price * successfulTxn;
+      const cost = marginalCostPerTxn * client.monthlyTxn;
+      const profit = revenue - cost;
+      const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+      
+      const targetPricePerAttempt = marginalCostPerTxn / (1 - targetMargin / 100);
+      const targetPricePerSuccess = successfulTxn > 0 ? (marginalCostPerTxn * client.monthlyTxn) / (successfulTxn * (1 - targetMargin / 100)) : 0;
+      
+      const metrics = { ...client, cumulativeVolume: newCumulativeVolume, successfulTxn, marginalCostPerTxn, incrementalVariable, incrementalTiered, incrementalTotal, revenue, cost, profit, margin, targetPricePerAttempt, targetPricePerSuccess, tierJump: incrementalTiered > 0 };
+      cumulativeVolume = newCumulativeVolume;
+      return metrics;
+    });
+  };
+  
+  const clientMetrics = calculateClientMetrics();
+  const totalNewVolume = clients.reduce((sum, c) => sum + c.monthlyTxn, 0);
+  const totalCumulativeVolume = baselineMonthlyTxn + totalNewVolume;
+  const totalRevenue = clientMetrics.reduce((sum, m) => sum + m.revenue, 0);
+  const totalCost = clientMetrics.reduce((sum, m) => sum + m.cost, 0);
+  const totalProfit = clientMetrics.reduce((sum, m) => sum + m.profit, 0);
+  const totalMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+
+  // Client management
+  const addClient = () => {
+    setClients([...clients, { id: Date.now(), name: `Client ${String.fromCharCode(65 + clients.length)}`, monthlyTxn: 2000000, conversionRate: 75, price: 0.01, pricingModel: 'perAttempt' }]);
+  };
+  const updateClient = (id, field, value) => setClients(clients.map(c => c.id === id ? { ...c, [field]: value } : c));
+  const removeClient = (id) => { if (clients.length > 1) setClients(clients.filter(c => c.id !== id)); };
+  const copyBaselineToProjected = () => setProjectedCosts(baselineCosts.map(c => ({ ...c, id: c.id + 1000 })));
+
+  // Cost table component
+  const CostTable = ({ costs, setCosts, newCost, setNewCost, color, monthlyVolume }) => {
+    const [expandedTierId, setExpandedTierId] = useState(null);
+    const updateCost = (id, field, value) => setCosts(costs.map(c => c.id === id ? { ...c, [field]: field === 'amount' ? parseFloat(value) || 0 : value } : c));
+    const updateTier = (costId, tierIndex, field, value) => {
+      setCosts(costs.map(c => {
+        if (c.id === costId && c.tiers) {
+          const newTiers = [...c.tiers];
+          newTiers[tierIndex] = { ...newTiers[tierIndex], [field]: field === 'upTo' && value === '' ? Infinity : parseFloat(value) || 0 };
+          return { ...c, tiers: newTiers };
+        }
+        return c;
+      }));
+    };
+    const addTier = (costId) => {
+      setCosts(costs.map(c => {
+        if (c.id === costId && c.tiers) {
+          const newTiers = [...c.tiers];
+          newTiers.splice(c.tiers.length - 1, 0, { upTo: 20000000, amount: c.tiers[c.tiers.length - 1].amount + 2000 });
+          return { ...c, tiers: newTiers };
+        }
+        return c;
+      }));
+    };
+    const removeTier = (costId, tierIndex) => setCosts(costs.map(c => (c.id === costId && c.tiers && c.tiers.length > 2) ? { ...c, tiers: c.tiers.filter((_, i) => i !== tierIndex) } : c));
+    const deleteCost = (id) => setCosts(costs.filter(c => c.id !== id));
+    const addCost = () => {
+      if (newCost.name && newCost.amount) {
+        const newCostItem = { ...newCost, id: Date.now(), amount: parseFloat(newCost.amount) };
+        if (newCost.type === 'tiered') newCostItem.tiers = [{ upTo: 6000000, amount: parseFloat(newCost.amount) }, { upTo: Infinity, amount: parseFloat(newCost.amount) * 1.5 }];
+        setCosts([...costs, newCostItem]);
+        setNewCost({ name: '', amount: '', currency: 'EUR', type: 'fixed' });
+      }
+    };
+
+    const cardBg = darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200';
+    const inputBg = darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-200';
+
+    return (
+      <div className="space-y-2">
+        <div className={`grid grid-cols-12 gap-2 text-xs font-medium px-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+          <div className="col-span-4">Service</div>
+          <div className="col-span-2">Amount</div>
+          <div className="col-span-2">Currency</div>
+          <div className="col-span-3">Type</div>
+          <div className="col-span-1"></div>
+        </div>
+        {costs.map((cost) => {
+          const currentTierIndex = getCurrentTierIndex(cost, monthlyVolume);
+          const isExpanded = expandedTierId === cost.id;
+          return (
+            <div key={cost.id}>
+              <div className={`grid grid-cols-12 gap-2 items-center rounded-lg p-2 ${cost.type === 'fixed' ? (darkMode ? 'bg-blue-900/30' : 'bg-blue-50') : cost.type === 'variable' ? (darkMode ? 'bg-amber-900/30' : 'bg-amber-50') : (darkMode ? 'bg-purple-900/30' : 'bg-purple-50')}`}>
+                <div className="col-span-4">
+                  <input type="text" value={cost.name} onChange={(e) => updateCost(cost.id, 'name', e.target.value)} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`} />
+                </div>
+                <div className="col-span-2">
+                  {cost.type === 'tiered' ? (
+                    <div className={`text-sm font-medium text-center ${darkMode ? 'text-purple-400' : 'text-purple-700'}`}>€{fmtNum(getTieredAmount(cost, monthlyVolume))}</div>
+                  ) : (
+                    <input type="number" value={cost.amount} onChange={(e) => updateCost(cost.id, 'amount', e.target.value)} className={`w-full px-2 py-1 border rounded text-right text-sm ${inputBg}`} />
+                  )}
+                </div>
+                <div className="col-span-2">
+                  <select value={cost.currency} onChange={(e) => updateCost(cost.id, 'currency', e.target.value)} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`}>
+                    <option value="EUR">EUR</option>
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+                <div className="col-span-3">
+                  <select value={cost.type} onChange={(e) => {
+                    const newType = e.target.value;
+                    if (newType === 'tiered' && !cost.tiers) {
+                      setCosts(costs.map(c => c.id === cost.id ? { ...c, type: newType, tiers: [{ upTo: 6000000, amount: cost.amount }, { upTo: Infinity, amount: cost.amount * 1.5 }] } : c));
+                    } else {
+                      updateCost(cost.id, 'type', newType);
+                    }
+                  }} className={`w-full px-2 py-1 border rounded text-sm font-medium ${cost.type === 'fixed' ? 'bg-blue-100 border-blue-300 text-blue-700' : cost.type === 'variable' ? 'bg-amber-100 border-amber-300 text-amber-700' : 'bg-purple-100 border-purple-300 text-purple-700'}`}>
+                    <option value="fixed">Fixed</option>
+                    <option value="variable">Variable</option>
+                    <option value="tiered">Tiered</option>
+                  </select>
+                </div>
+                <div className="col-span-1 flex justify-end gap-1">
+                  {cost.type === 'tiered' && (
+                    <button onClick={() => setExpandedTierId(isExpanded ? null : cost.id)} className={`p-1 ${darkMode ? 'text-purple-400 hover:text-purple-300' : 'text-purple-500 hover:text-purple-700'}`}>
+                      <TrendingUp className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button onClick={() => deleteCost(cost.id)} className={`p-1 ${darkMode ? 'text-gray-500 hover:text-red-400' : 'text-gray-400 hover:text-red-500'}`}>
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              {cost.type === 'tiered' && isExpanded && cost.tiers && (
+                <div className={`ml-4 mt-2 p-3 rounded-lg ${darkMode ? 'bg-purple-900/30' : 'bg-purple-100'}`}>
+                  <div className={`text-xs font-medium mb-2 ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>Volume Tiers (current: {fmtM(monthlyVolume)}/mo)</div>
+                  <div className="space-y-2">
+                    {cost.tiers.map((tier, idx) => (
+                      <div key={idx} className={`flex items-center gap-2 text-sm ${currentTierIndex === idx ? 'font-bold' : ''}`}>
+                        <span className={darkMode ? 'text-purple-400' : 'text-purple-600'}>Up to</span>
+                        <input type="number" value={tier.upTo === Infinity ? '' : tier.upTo} placeholder="∞" onChange={(e) => updateTier(cost.id, idx, 'upTo', e.target.value)} className={`w-24 px-2 py-1 border rounded text-right text-sm ${inputBg}`} />
+                        <span className={darkMode ? 'text-purple-400' : 'text-purple-600'}>→ {cost.currency}</span>
+                        <input type="number" value={tier.amount} onChange={(e) => updateTier(cost.id, idx, 'amount', e.target.value)} className={`w-24 px-2 py-1 border rounded text-right text-sm ${inputBg}`} />
+                        {currentTierIndex === idx && <span className="text-xs bg-purple-600 text-white px-2 py-0.5 rounded">active</span>}
+                        {cost.tiers.length > 2 && <button onClick={() => removeTier(cost.id, idx)} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="w-3 h-3" /></button>}
+                      </div>
+                    ))}
+                    <button onClick={() => addTier(cost.id)} className={`text-xs flex items-center gap-1 ${darkMode ? 'text-purple-400 hover:text-purple-300' : 'text-purple-600 hover:text-purple-800'}`}>
+                      <Plus className="w-3 h-3" /> Add tier
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <div className={`grid grid-cols-12 gap-2 items-center border-t border-dashed pt-3 mt-4 ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
+          <div className="col-span-4"><input type="text" placeholder="New cost..." value={newCost.name} onChange={(e) => setNewCost({...newCost, name: e.target.value})} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`} /></div>
+          <div className="col-span-2"><input type="number" placeholder="0" value={newCost.amount} onChange={(e) => setNewCost({...newCost, amount: e.target.value})} className={`w-full px-2 py-1 border rounded text-right text-sm ${inputBg}`} /></div>
+          <div className="col-span-2"><select value={newCost.currency} onChange={(e) => setNewCost({...newCost, currency: e.target.value})} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`}><option value="EUR">EUR</option><option value="USD">USD</option></select></div>
+          <div className="col-span-3"><select value={newCost.type} onChange={(e) => setNewCost({...newCost, type: e.target.value})} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`}><option value="fixed">Fixed</option><option value="variable">Variable</option><option value="tiered">Tiered</option></select></div>
+          <div className="col-span-1"><button onClick={addCost} className={`p-1 text-white rounded hover:opacity-80 ${color}`}><Plus className="w-4 h-4" /></button></div>
+        </div>
+      </div>
+    );
+  };
+
+  // Styling
   const cardBg = darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200';
   const cardText = darkMode ? 'text-white' : 'text-gray-800';
   const labelText = darkMode ? 'text-gray-400' : 'text-gray-500';
   const inputBg = darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-200';
-  const inputBgAlt = darkMode ? 'bg-gray-600 border-gray-500 text-white' : 'bg-gray-50 border-gray-200';
 
   return (
     <div className="space-y-6">
-      {/* Volume & Payment Methods */}
-      <div className={`rounded-xl p-6 shadow-sm border ${cardBg}`}>
-        <h2 className={`text-sm font-semibold uppercase tracking-wide mb-4 ${labelText}`}>Monthly Volume by Payment Method</h2>
-        
-        <div className="mb-4">
-          <label className={`block text-sm mb-1 ${labelText}`}>Total Transactions (all methods)</label>
-          <input
-            type="number"
-            value={totalTransactions}
-            onChange={(e) => setTotalTransactions(parseInt(e.target.value) || 0)}
-            className={`w-48 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 ${inputBg}`}
-          />
-        </div>
-
-        <div className="space-y-3">
-          <div className={`grid grid-cols-12 gap-2 text-xs font-medium px-1 ${labelText}`}>
-            <div className="col-span-3">Method</div>
-            <div className="col-span-2">Volume %</div>
-            <div className="col-span-2">Conversion %</div>
-            <div className="col-span-2 text-right">Attempts</div>
-            <div className="col-span-3 text-right">Successful</div>
-          </div>
-
-          {methodsWithCalcs.map((method) => (
-            <div key={method.id} className={`grid grid-cols-12 gap-2 items-center rounded-lg p-2 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-              <div className="col-span-3 flex items-center gap-2">
-                {method.icon === 'card' && <CreditCard className={`w-4 h-4 ${labelText}`} />}
-                {method.icon === 'apple' && <Smartphone className={`w-4 h-4 ${labelText}`} />}
-                {method.icon === 'google' && <Smartphone className={`w-4 h-4 ${labelText}`} />}
-                <span className={`font-medium ${cardText}`}>{method.name}</span>
-              </div>
-              <div className="col-span-2">
-                <input
-                  type="number"
-                  value={method.volumePct}
-                  onChange={(e) => updateMethod(method.id, 'volumePct', e.target.value)}
-                  className={`w-full px-2 py-1 border rounded text-center text-sm ${inputBg}`}
-                />
-              </div>
-              <div className="col-span-2">
-                <input
-                  type="number"
-                  value={method.conversionRate}
-                  onChange={(e) => updateMethod(method.id, 'conversionRate', e.target.value)}
-                  className={`w-full px-2 py-1 border rounded text-center text-sm ${inputBg}`}
-                />
-              </div>
-              <div className={`col-span-2 text-right text-sm ${labelText}`}>{fmtNum(method.attempts)}</div>
-              <div className={`col-span-3 text-right text-sm font-medium ${cardText}`}>{fmtNum(method.successful)}</div>
-            </div>
-          ))}
-
-          <div className={`grid grid-cols-12 gap-2 items-center border-t pt-3 mt-2 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-            <div className={`col-span-3 font-semibold ${cardText}`}>Total / Blended</div>
-            <div className={`col-span-2 text-center text-sm ${labelText}`}>100%</div>
-            <div className={`col-span-2 text-center text-sm font-medium ${cardText}`}>{fmt(blendedConversion, 1)}%</div>
-            <div className={`col-span-2 text-right text-sm ${labelText}`}>{fmtNum(totalAttempts)}</div>
-            <div className={`col-span-3 text-right text-sm font-bold ${cardText}`}>{fmtNum(totalSuccessful)}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Infrastructure Costs */}
-      <div className={`rounded-xl p-6 shadow-sm border ${cardBg}`}>
-        <div className="flex justify-between items-center mb-4">
-          <h2 className={`text-sm font-semibold uppercase tracking-wide ${labelText}`}>Monthly Infrastructure</h2>
-          <div className="flex items-center gap-2 text-sm">
-            <span className={labelText}>EUR/USD:</span>
-            <input
-              type="number"
-              step="0.01"
-              value={eurToUsd}
-              onChange={(e) => setEurToUsd(parseFloat(e.target.value) || 1)}
-              className={`w-16 px-2 py-1 border rounded text-center ${inputBg}`}
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          {costs.map((cost) => (
-            <div key={cost.id} className="flex items-center gap-2">
-              <input
-                type="text"
-                value={cost.name}
-                onChange={(e) => updateCost(cost.id, 'name', e.target.value)}
-                className={`flex-1 px-3 py-2 border rounded-lg ${inputBgAlt}`}
-              />
-              <input
-                type="number"
-                value={cost.amount}
-                onChange={(e) => updateCost(cost.id, 'amount', e.target.value)}
-                className={`w-28 px-3 py-2 border rounded-lg text-right ${inputBg}`}
-              />
-              <select
-                value={cost.currency}
-                onChange={(e) => updateCost(cost.id, 'currency', e.target.value)}
-                className={`px-2 py-2 border rounded-lg ${inputBg}`}
-              >
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-              </select>
-              <button onClick={() => deleteCost(cost.id)} className="p-2 text-gray-400 hover:text-red-500">
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-
-          <div className={`flex items-center gap-2 pt-2 border-t border-dashed mt-4 ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
-            <input
-              type="text"
-              placeholder="New service..."
-              value={newCost.name}
-              onChange={(e) => setNewCost({...newCost, name: e.target.value})}
-              className={`flex-1 px-3 py-2 border rounded-lg ${inputBg}`}
-            />
-            <input
-              type="number"
-              placeholder="0"
-              value={newCost.amount}
-              onChange={(e) => setNewCost({...newCost, amount: e.target.value})}
-              className={`w-28 px-3 py-2 border rounded-lg text-right ${inputBg}`}
-            />
-            <select
-              value={newCost.currency}
-              onChange={(e) => setNewCost({...newCost, currency: e.target.value})}
-              className={`px-2 py-2 border rounded-lg ${inputBg}`}
-            >
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-            </select>
-            <button onClick={addCost} className="p-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
-              <Plus className="w-4 h-4" />
+      {/* SAVE/LOAD SCENARIOS */}
+      <div className={`rounded-xl p-4 shadow-sm border ${cardBg}`}>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <Save className={`w-5 h-5 ${labelText}`} />
+            <input type="text" value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Scenario name..." className={`px-3 py-2 border rounded-lg w-48 ${inputBg}`} />
+            <button onClick={saveScenario} disabled={!supabase} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
+              <Save className="w-4 h-4" /> Save
             </button>
+            {saveStatus && <span className={`text-sm ${labelText}`}>{saveStatus}</span>}
+            {currentScenarioId && (
+              <button onClick={() => setShowHistory(!showHistory)} className={`flex items-center gap-2 px-3 py-2 rounded-lg ${showHistory ? 'bg-amber-100 text-amber-700' : darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                <History className="w-4 h-4" /> History {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-sm ${labelText}`}>EUR/USD:</span>
+            <input type="number" step="0.01" value={eurToUsd} onChange={(e) => setEurToUsd(parseFloat(e.target.value) || 1)} className={`w-16 px-2 py-1 border rounded text-center ${inputBg}`} />
+          </div>
+        </div>
+        
+        {savedScenarios.length > 0 && (
+          <div className={`mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+            <div className="flex items-center gap-2 flex-wrap">
+              <FolderOpen className={`w-4 h-4 ${labelText}`} />
+              <span className={`text-sm ${labelText}`}>Load:</span>
+              {savedScenarios.map(s => (
+                <div key={s.id} className="flex items-center gap-1">
+                  <button onClick={() => loadScenario(s)} className={`px-2 py-1 text-sm rounded ${currentScenarioId === s.id ? 'bg-indigo-100 text-indigo-700 font-medium' : darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' : 'bg-gray-100 hover:bg-gray-200'}`}>{s.name}</button>
+                  <button onClick={() => deleteScenario(s.id)} className={`p-1 ${darkMode ? 'text-gray-500 hover:text-red-400' : 'text-gray-400 hover:text-red-500'}`}><Trash2 className="w-3 h-3" /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {showHistory && currentScenarioId && (
+          <div className={`mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <History className="w-4 h-4 text-amber-600" />
+              <span className={`text-sm font-medium ${cardText}`}>Version History</span>
+            </div>
+            {history.length === 0 ? (
+              <div className={`text-sm italic ${labelText}`}>No history available</div>
+            ) : (
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {history.map((h, idx) => (
+                  <div key={h.id} className={`p-3 rounded-lg border ${idx === 0 ? 'bg-amber-50 border-amber-200' : darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-bold ${idx === 0 ? 'text-amber-700' : darkMode ? 'text-gray-300' : 'text-gray-600'}`}>v{h.version_number}</span>
+                        {idx === 0 && <span className="text-xs bg-amber-200 text-amber-800 px-2 py-0.5 rounded">current</span>}
+                      </div>
+                      <button onClick={() => loadHistoryVersion(h)} className="text-xs text-indigo-600 hover:text-indigo-800">Restore</button>
+                    </div>
+                    <div className={`mt-1 flex items-center gap-2 text-xs ${labelText}`}>
+                      <Clock className="w-3 h-3" />
+                      {new Date(h.created_at).toLocaleString()}
+                    </div>
+                    <div className="mt-1 flex items-center gap-2 text-xs">
+                      <span className={labelText}>by</span>
+                      <span className={`font-medium ${cardText}`}>{h.changed_by_email || h.changed_by}</span>
+                    </div>
+                    <div className={`mt-2 text-xs p-2 rounded border ${darkMode ? 'bg-gray-800 border-gray-600 text-gray-300' : 'bg-white border-gray-100 text-gray-600'}`}>{h.change_summary}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {!supabase && <div className="mt-2 text-sm text-amber-600">⚠️ Supabase not connected. Saving disabled.</div>}
+      </div>
+
+      {/* SECTION 1: BASELINE */}
+      <div className={`rounded-xl p-6 shadow-sm border ${cardBg}`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${darkMode ? 'bg-indigo-900/50' : 'bg-indigo-100'}`}>
+              <span className={`font-bold ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>1</span>
+            </div>
+            <div>
+              <h2 className={`text-lg font-bold ${cardText}`}>Baseline</h2>
+              <p className={`text-sm ${labelText}`}>Your actual costs & volume</p>
+            </div>
+          </div>
+          <input type="text" value={baselineYear} onChange={(e) => setBaselineYear(e.target.value)} className={`px-3 py-1 border rounded-lg text-center font-bold w-20 ${darkMode ? 'border-indigo-700 bg-indigo-900/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`} />
+        </div>
+        
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <div>
+            <label className={`block text-sm mb-1 ${labelText}`}>Annual Transactions (attempts)</label>
+            <input type="number" value={baselineAnnualTxn} onChange={(e) => setBaselineAnnualTxn(parseInt(e.target.value) || 0)} className={`w-full px-3 py-2 border rounded-lg ${inputBg}`} />
+          </div>
+          <div>
+            <label className={`block text-sm mb-1 ${labelText}`}>Conversion Rate %</label>
+            <input type="number" step="0.1" value={baselineConversionRate} onChange={(e) => setBaselineConversionRate(parseFloat(e.target.value) || 0)} className={`w-full px-3 py-2 border rounded-lg ${inputBg}`} />
+          </div>
+          <div className={`rounded-lg p-2 flex flex-col justify-center ${darkMode ? 'bg-indigo-900/30' : 'bg-indigo-50'}`}>
+            <div className={`text-xs ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>Monthly: {fmtM(baselineMonthlyTxn)} attempts</div>
+            <div className={`font-bold ${darkMode ? 'text-indigo-300' : 'text-indigo-700'}`}>{fmtM(baselineSuccessfulTxn)} successful</div>
           </div>
         </div>
 
-        <div className={`mt-4 pt-4 border-t flex justify-between items-center ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-          <span className={`font-medium ${cardText}`}>Total</span>
-          <span className={`text-xl font-bold ${cardText}`}>€{fmtNum(Math.round(totalMonthlyEUR))}</span>
+        <CostTable costs={baselineCosts} setCosts={setBaselineCosts} newCost={newBaselineCost} setNewCost={setNewBaselineCost} color="bg-indigo-600" monthlyVolume={baselineMonthlyTxn} />
+
+        <div className={`mt-6 pt-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+          <div className="grid grid-cols-4 gap-4 mb-4">
+            <div><div className={`text-xs ${labelText}`}>Fixed</div><div className="font-bold text-blue-600">€{fmtNum(baselineMonthly.fixed)}/mo</div></div>
+            <div><div className={`text-xs ${labelText}`}>Variable</div><div className="font-bold text-amber-600">€{fmtNum(baselineMonthly.variable)}/mo</div></div>
+            <div><div className={`text-xs ${labelText}`}>Tiered</div><div className="font-bold text-purple-600">€{fmtNum(baselineMonthly.tiered)}/mo</div></div>
+            <div><div className={`text-xs ${labelText}`}>Total</div><div className={`font-bold ${cardText}`}>€{fmtNum(baselineMonthly.total)}/mo</div></div>
+          </div>
+          
+          <div className="bg-indigo-600 rounded-lg p-4 text-white">
+            <div className="text-xs font-semibold uppercase tracking-wide opacity-75 mb-3">Cost Per Transaction</div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white/10 rounded-lg p-3">
+                <div className="text-xs opacity-75 mb-2 text-center">Per Attempt</div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-lg font-bold">€{fmt(baselineCostPerTxn, 4)}</div><div className="text-xs opacity-75">average</div></div>
+                  <div><div className="text-lg font-bold">€{fmt(baselineMonthly.fixed / baselineMonthlyTxn, 4)}</div><div className="text-xs opacity-75">fixed</div></div>
+                  <div><div className="text-lg font-bold">€{fmt(baselineVariableCostPerTxn, 4)}</div><div className="text-xs opacity-75">variable</div></div>
+                </div>
+              </div>
+              <div className="bg-white/20 rounded-lg p-3">
+                <div className="text-xs opacity-75 mb-2 text-center">Per Successful ({fmt(baselineConversionRate, 0)}%)</div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-lg font-bold">€{fmt(baselineCostPerSuccess, 4)}</div><div className="text-xs opacity-75">average</div></div>
+                  <div><div className="text-lg font-bold">€{fmt(baselineMonthly.fixed / baselineSuccessfulTxn, 4)}</div><div className="text-xs opacity-75">fixed</div></div>
+                  <div><div className="text-lg font-bold">€{fmt(baselineVariableCostPerSuccess, 4)}</div><div className="text-xs opacity-75">variable</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Cost Per Method */}
-      <div className="bg-indigo-600 rounded-xl p-6 text-white">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wide opacity-75">Cost Per Successful Transaction</h2>
+      <div className="flex justify-center"><ArrowRight className={`w-6 h-6 rotate-90 ${labelText}`} /></div>
+
+      {/* SECTION 2: PROJECTED */}
+      <div className={`rounded-xl p-6 shadow-sm border ${darkMode ? 'bg-gray-800 border-purple-700' : 'bg-white border-purple-200'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${darkMode ? 'bg-purple-900/50' : 'bg-purple-100'}`}>
+              <span className={`font-bold ${darkMode ? 'text-purple-400' : 'text-purple-600'}`}>2</span>
+            </div>
+            <div>
+              <h2 className={`text-lg font-bold ${cardText}`}>Projected</h2>
+              <p className={`text-sm ${labelText}`}>Planned cost changes (same volume)</p>
+            </div>
+          </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm opacity-75">Your price:</span>
-            <input
-              type="number"
-              step="0.0001"
-              value={yourPriceEur}
-              onChange={(e) => setYourPriceEur(parseFloat(e.target.value) || 0)}
-              className="w-24 px-2 py-1 rounded bg-white/20 text-white text-center"
-            />
-            <span className="text-sm opacity-75">€</span>
+            <button onClick={copyBaselineToProjected} className={`flex items-center gap-1 px-3 py-1 text-sm rounded-lg ${darkMode ? 'text-purple-400 hover:bg-purple-900/30' : 'text-purple-600 hover:bg-purple-50'}`}>
+              <Copy className="w-4 h-4" /> Copy from baseline
+            </button>
+            <input type="text" value={projectedYear} onChange={(e) => setProjectedYear(e.target.value)} className={`px-3 py-1 border rounded-lg text-center font-bold w-20 ${darkMode ? 'border-purple-700 bg-purple-900/30 text-purple-400' : 'border-purple-200 text-purple-600'}`} />
           </div>
         </div>
 
-        <div className="space-y-3">
-          {methodsWithCalcs.map((method) => (
-            <div key={method.id} className="bg-white/10 rounded-lg p-4">
-              <div className="flex justify-between items-center">
-                <div>
-                  <div className="font-medium">{method.name}</div>
-                  <div className="text-sm opacity-75">{method.conversionRate}% conversion</div>
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <div className={`rounded-lg p-2 flex flex-col justify-center ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+            <div className={`text-xs ${labelText}`}>Attempts / month (same)</div>
+            <div className={`font-bold ${cardText}`}>{fmtM(baselineMonthlyTxn)}</div>
+          </div>
+          <div>
+            <label className={`block text-sm mb-1 ${labelText}`}>Conversion Rate %</label>
+            <input type="number" step="0.1" value={projectedConversionRate} onChange={(e) => setProjectedConversionRate(parseFloat(e.target.value) || 0)} className={`w-full px-3 py-2 border rounded-lg ${inputBg}`} />
+          </div>
+          <div className={`rounded-lg p-2 flex flex-col justify-center ${darkMode ? 'bg-purple-900/30' : 'bg-purple-50'}`}>
+            <div className={`text-xs ${darkMode ? 'text-purple-400' : 'text-purple-600'}`}>Successful / month</div>
+            <div className={`font-bold ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>{fmtM(projectedSuccessfulTxn)}</div>
+          </div>
+        </div>
+
+        <CostTable costs={projectedCosts} setCosts={setProjectedCosts} newCost={newProjectedCost} setNewCost={setNewProjectedCost} color="bg-purple-600" monthlyVolume={baselineMonthlyTxn} />
+
+        <div className={`mt-6 pt-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+          <div className="grid grid-cols-4 gap-4 mb-4">
+            <div><div className={`text-xs ${labelText}`}>Fixed</div><div className="font-bold text-blue-600">€{fmtNum(projectedMonthly.fixed)}/mo</div></div>
+            <div><div className={`text-xs ${labelText}`}>Variable</div><div className="font-bold text-amber-600">€{fmtNum(projectedMonthly.variable)}/mo</div></div>
+            <div><div className={`text-xs ${labelText}`}>Tiered</div><div className="font-bold text-purple-600">€{fmtNum(projectedMonthly.tiered)}/mo</div></div>
+            <div><div className={`text-xs ${labelText}`}>Total</div><div className={`font-bold ${cardText}`}>€{fmtNum(projectedMonthly.total)}/mo</div></div>
+          </div>
+          
+          <div className="bg-purple-600 rounded-lg p-4 text-white">
+            <div className="text-xs font-semibold uppercase tracking-wide opacity-75 mb-3">Cost Per Transaction</div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white/10 rounded-lg p-3">
+                <div className="text-xs opacity-75 mb-2 text-center">Per Attempt</div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-lg font-bold">€{fmt(projectedCostPerTxn, 4)}</div><div className="text-xs opacity-75">average</div></div>
+                  <div><div className="text-lg font-bold">€{fmt(projectedMonthly.fixed / baselineMonthlyTxn, 4)}</div><div className="text-xs opacity-75">fixed</div></div>
+                  <div><div className="text-lg font-bold">€{fmt(projectedVariableCostPerTxn, 4)}</div><div className="text-xs opacity-75">variable</div></div>
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold">€{fmt(method.costPerSuccessful, 4)}</div>
-                  <div className={`text-sm ${method.margin >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                    Margin: €{fmt(method.margin, 4)} ({fmt(method.marginPct, 1)}%)
+              </div>
+              <div className="bg-white/20 rounded-lg p-3">
+                <div className="text-xs opacity-75 mb-2 text-center">Per Successful ({fmt(projectedConversionRate, 0)}%)</div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-lg font-bold">€{fmt(projectedCostPerSuccess, 4)}</div><div className="text-xs opacity-75">average</div></div>
+                  <div><div className="text-lg font-bold">€{fmt(projectedMonthly.fixed / projectedSuccessfulTxn, 4)}</div><div className="text-xs opacity-75">fixed</div></div>
+                  <div><div className="text-lg font-bold">€{fmt(projectedVariableCostPerSuccess, 4)}</div><div className="text-xs opacity-75">variable</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-center"><ArrowRight className={`w-6 h-6 rotate-90 ${labelText}`} /></div>
+
+      {/* SECTION 3: MULTIPLE CLIENTS */}
+      <div className={`rounded-xl p-6 shadow-sm border ${darkMode ? 'bg-gray-800 border-emerald-700' : 'bg-white border-emerald-200'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${darkMode ? 'bg-emerald-900/50' : 'bg-emerald-100'}`}>
+              <span className={`font-bold ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>3</span>
+            </div>
+            <div>
+              <h2 className={`text-lg font-bold ${cardText}`}>New Clients</h2>
+              <p className={`text-sm ${labelText}`}>Model multiple clients with cumulative impact</p>
+            </div>
+          </div>
+          <button onClick={addClient} className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
+            <Plus className="w-4 h-4" /> Add Client
+          </button>
+        </div>
+
+        {/* Target Margin Calculator */}
+        <div className={`mb-4 p-4 rounded-lg border ${darkMode ? 'bg-amber-900/20 border-amber-700' : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-200'}`}>
+          <div className="flex items-center gap-4">
+            <Target className={`w-5 h-5 ${darkMode ? 'text-amber-400' : 'text-amber-600'}`} />
+            <span className={`text-sm font-medium ${darkMode ? 'text-amber-300' : 'text-amber-800'}`}>Target Margin Calculator</span>
+            <input type="number" value={targetMargin} onChange={(e) => setTargetMargin(parseFloat(e.target.value) || 0)} className={`w-20 px-2 py-1 border rounded text-center ${darkMode ? 'bg-gray-700 border-amber-600 text-white' : 'border-amber-300'}`} />
+            <span className={`text-sm ${darkMode ? 'text-amber-400' : 'text-amber-700'}`}>%</span>
+            <span className={`text-xs ${darkMode ? 'text-amber-500' : 'text-amber-600'}`}>→ Shows required price for each client below</span>
+          </div>
+        </div>
+
+        {/* Client Cards */}
+        <div className="space-y-4">
+          {clients.map((client, index) => {
+            const metrics = clientMetrics[index];
+            return (
+              <div key={client.id} className={`p-4 rounded-lg border ${metrics.tierJump ? (darkMode ? 'border-purple-600 bg-purple-900/20' : 'border-purple-300 bg-purple-50') : (darkMode ? 'border-gray-600 bg-gray-700' : 'border-gray-200 bg-gray-50')}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <Users className={`w-5 h-5 ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                    <input type="text" value={client.name} onChange={(e) => updateClient(client.id, 'name', e.target.value)} className={`px-2 py-1 border rounded font-medium w-32 ${inputBg}`} />
+                    {metrics.tierJump && <span className="text-xs bg-purple-600 text-white px-2 py-1 rounded">⬆ Tier Jump</span>}
+                  </div>
+                  {clients.length > 1 && <button onClick={() => removeClient(client.id)} className={`p-1 ${darkMode ? 'text-gray-500 hover:text-red-400' : 'text-gray-400 hover:text-red-500'}`}><Trash2 className="w-4 h-4" /></button>}
+                </div>
+                
+                <div className="grid grid-cols-5 gap-3 mb-3">
+                  <div>
+                    <label className={`block text-xs mb-1 ${labelText}`}>Monthly Txn</label>
+                    <input type="number" value={client.monthlyTxn} onChange={(e) => updateClient(client.id, 'monthlyTxn', parseInt(e.target.value) || 0)} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`} />
+                    <div className={`text-xs ${labelText}`}>{fmtM(client.monthlyTxn)}/mo</div>
+                  </div>
+                  <div>
+                    <label className={`block text-xs mb-1 ${labelText}`}>Conversion %</label>
+                    <input type="number" value={client.conversionRate} onChange={(e) => updateClient(client.id, 'conversionRate', parseFloat(e.target.value) || 0)} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`} />
+                    <div className={`text-xs ${labelText}`}>{fmtM(metrics.successfulTxn)} success</div>
+                  </div>
+                  <div>
+                    <label className={`block text-xs mb-1 ${labelText}`}>Pricing</label>
+                    <select value={client.pricingModel} onChange={(e) => updateClient(client.id, 'pricingModel', e.target.value)} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`}>
+                      <option value="perAttempt">Per Attempt</option>
+                      <option value="perSuccess">Per Success</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`block text-xs mb-1 ${labelText}`}>Your Price €</label>
+                    <input type="number" step="0.0001" value={client.price} onChange={(e) => updateClient(client.id, 'price', parseFloat(e.target.value) || 0)} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`} />
+                  </div>
+                  <div className={`rounded p-2 ${darkMode ? 'bg-amber-900/30' : 'bg-amber-100'}`}>
+                    <label className={`block text-xs mb-1 ${darkMode ? 'text-amber-400' : 'text-amber-700'}`}>For {targetMargin}% margin</label>
+                    <div className={`text-sm font-bold ${darkMode ? 'text-amber-300' : 'text-amber-800'}`}>€{fmt(client.pricingModel === 'perAttempt' ? metrics.targetPricePerAttempt : metrics.targetPricePerSuccess, 4)}</div>
+                    <div className={`text-xs ${darkMode ? 'text-amber-500' : 'text-amber-600'}`}>per {client.pricingModel === 'perAttempt' ? 'attempt' : 'success'}</div>
                   </div>
                 </div>
-              </div>
-            </div>
-          ))}
-
-          <div className="bg-white/20 rounded-lg p-4 mt-4">
-            <div className="flex justify-between items-center">
-              <div>
-                <div className="font-bold">Blended Average</div>
-                <div className="text-sm opacity-75">{fmt(blendedConversion, 1)}% conversion</div>
-              </div>
-              <div className="text-right">
-                <div className="text-3xl font-bold">€{fmt(blendedCostPerSuccessful, 4)}</div>
-                <div className={`text-sm ${blendedMargin >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                  Margin: €{fmt(blendedMargin, 4)} ({fmt(blendedMarginPct, 1)}%)
+                
+                <div className={`grid grid-cols-5 gap-3 pt-3 border-t ${darkMode ? 'border-gray-600' : 'border-gray-200'}`}>
+                  <div><div className={`text-xs ${labelText}`}>Marginal Cost</div><div className={`font-medium ${cardText}`}>€{fmt(metrics.marginalCostPerTxn, 4)}/txn</div></div>
+                  <div><div className={`text-xs ${labelText}`}>Revenue</div><div className="font-medium text-emerald-600">€{fmtNum(metrics.revenue)}/mo</div></div>
+                  <div><div className={`text-xs ${labelText}`}>Cost</div><div className="font-medium text-red-600">€{fmtNum(metrics.cost)}/mo</div></div>
+                  <div><div className={`text-xs ${labelText}`}>Profit</div><div className={`font-bold ${metrics.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>€{fmtNum(metrics.profit)}/mo</div></div>
+                  <div><div className={`text-xs ${labelText}`}>Margin</div><div className={`font-bold ${metrics.margin >= targetMargin ? 'text-emerald-600' : 'text-amber-600'}`}>{fmt(metrics.margin, 1)}%</div></div>
                 </div>
+                
+                {metrics.tierJump && <div className={`mt-2 text-xs ${darkMode ? 'text-purple-400' : 'text-purple-700'}`}>⚠️ This client triggers tier jump: +€{fmtNum(metrics.incrementalTiered)}/mo in auto-scaling</div>}
               </div>
+            );
+          })}
+        </div>
+
+        {/* Cumulative Summary */}
+        <div className="mt-6 bg-emerald-600 rounded-lg p-4 text-white">
+          <div className="text-xs font-semibold uppercase tracking-wide opacity-75 mb-3">Combined Impact: All {clients.length} Client{clients.length > 1 ? 's' : ''}</div>
+          
+          <div className="grid grid-cols-5 gap-4">
+            <div className="bg-white/10 rounded-lg p-3 text-center">
+              <div className="text-xs opacity-75">Total New Volume</div>
+              <div className="text-xl font-bold">{fmtM(totalNewVolume)}/mo</div>
+              <div className="text-xs opacity-75">Cumulative: {fmtM(totalCumulativeVolume)}</div>
+            </div>
+            <div className="bg-white/10 rounded-lg p-3 text-center">
+              <div className="text-xs opacity-75">Total Revenue</div>
+              <div className="text-xl font-bold">€{fmtNum(totalRevenue)}</div>
+              <div className="text-xs opacity-75">/month</div>
+            </div>
+            <div className="bg-white/10 rounded-lg p-3 text-center">
+              <div className="text-xs opacity-75">Total Cost</div>
+              <div className="text-xl font-bold">€{fmtNum(totalCost)}</div>
+              <div className="text-xs opacity-75">/month</div>
+            </div>
+            <div className="bg-white/20 rounded-lg p-3 text-center">
+              <div className="text-xs opacity-75">Total Profit</div>
+              <div className={`text-2xl font-bold ${totalProfit >= 0 ? '' : 'text-red-300'}`}>€{fmtNum(totalProfit)}</div>
+              <div className="text-xs opacity-75">/month</div>
+            </div>
+            <div className="bg-white/20 rounded-lg p-3 text-center">
+              <div className="text-xs opacity-75">Blended Margin</div>
+              <div className={`text-2xl font-bold ${totalMargin >= targetMargin ? '' : 'text-amber-300'}`}>{fmt(totalMargin, 1)}%</div>
+              <div className="text-xs opacity-75">target: {targetMargin}%</div>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Monthly Profit */}
-      <div className={`rounded-xl p-6 shadow-sm border ${cardBg}`}>
-        <h2 className={`text-sm font-semibold uppercase tracking-wide mb-4 ${labelText}`}>Monthly Profit by Method</h2>
-        <div className="space-y-2">
-          {methodsWithCalcs.map((method) => (
-            <div key={method.id} className={`flex justify-between items-center py-2 border-b last:border-0 ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-              <span className={cardText}>{method.name}</span>
-              <span className={`font-bold ${method.margin >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                €{fmtNum(Math.round(method.margin * method.successful))}
-              </span>
-            </div>
-          ))}
-          <div className={`flex justify-between items-center pt-3 border-t-2 ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
-            <span className={`font-bold ${cardText}`}>Total Monthly Profit</span>
-            <span className={`text-xl font-bold ${blendedMargin >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-              €{fmtNum(Math.round(blendedMargin * totalSuccessful))}
-            </span>
+          
+          <div className="mt-4 p-3 bg-white/10 rounded-lg text-sm">
+            <strong>📊 Summary:</strong> Adding {clients.length} client{clients.length > 1 ? 's' : ''} brings {fmtM(totalNewVolume)} new txn/month, generating €{fmtNum(totalProfit)}/month profit at {fmt(totalMargin, 1)}% blended margin.
+            {clientMetrics.some(m => m.tierJump) && ` Includes tier jump costs.`}
           </div>
         </div>
       </div>
@@ -2858,7 +3315,7 @@ export default function CalculatorApp() {
         </div>
 
         {/* Content */}
-        {activeTab === 'transactions' && <TransactionCostCalculator darkMode={darkMode} />}
+        {activeTab === 'transactions' && <TransactionCostCalculator darkMode={darkMode} supabase={supabase} userEmail={session?.user?.email} />}
         {activeTab === 'features' && <FeatureCostCalculator darkMode={darkMode} />}
         {activeTab === 'storypoints' && <StoryPointsCalculator darkMode={darkMode} />}
         {activeTab === 'commercial' && <CommercialOfferCalculator darkMode={darkMode} />}
