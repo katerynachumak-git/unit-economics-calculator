@@ -113,6 +113,61 @@ function LoginPage({ onSuccess, darkMode }) {
   );
 }
 
+// Password-protected tab wrapper for under-construction tabs
+function ProtectedTab({ children, darkMode, tabName }) {
+  const [password, setPassword] = useState('');
+  const [unlocked, setUnlocked] = useState(false);
+  const [error, setError] = useState('');
+  const correctPassword = 'xK9#mPq$2vL8@nZr';
+
+  const handleUnlock = () => {
+    if (password === correctPassword) {
+      setUnlocked(true);
+      setError('');
+    } else {
+      setError('Incorrect password');
+    }
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter') handleUnlock();
+  };
+
+  if (unlocked) return children;
+
+  return (
+    <div className={`rounded-xl p-8 shadow-sm border text-center ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
+      <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${darkMode ? 'bg-amber-900/30' : 'bg-amber-100'}`}>
+        <Lock className={`w-8 h-8 ${darkMode ? 'text-amber-400' : 'text-amber-600'}`} />
+      </div>
+      <h2 className={`text-xl font-bold mb-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{tabName}</h2>
+      <p className={`text-sm mb-6 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+        🚧 Under construction — Enter password to access
+      </p>
+      <div className="max-w-xs mx-auto space-y-3">
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyPress={handleKeyPress}
+          placeholder="Password"
+          className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 ${
+            darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'border-gray-200'
+          }`}
+          autoFocus
+        />
+        {error && <p className="text-red-500 text-sm">{error}</p>}
+        <button
+          onClick={handleUnlock}
+          className="w-full py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 transition-colors"
+        >
+          Unlock
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Tab Navigation Component
 function TabNav({ tabs, activeTab, setActiveTab, darkMode }) {
   return (
@@ -3316,10 +3371,10 @@ export default function CalculatorApp() {
 
         {/* Content */}
         {activeTab === 'transactions' && <TransactionCostCalculator darkMode={darkMode} supabase={supabase} userEmail={session?.user?.email} />}
-        {activeTab === 'features' && <FeatureCostCalculator darkMode={darkMode} />}
-        {activeTab === 'storypoints' && <StoryPointsCalculator darkMode={darkMode} />}
-        {activeTab === 'commercial' && <CommercialOfferCalculator darkMode={darkMode} />}
-        {activeTab === 'proposal' && <ClientProposalCalculator darkMode={darkMode} />}
+        {activeTab === 'features' && <ProtectedTab darkMode={darkMode} tabName="Team/Time Calculator"><FeatureCostCalculator darkMode={darkMode} /></ProtectedTab>}
+        {activeTab === 'storypoints' && <ProtectedTab darkMode={darkMode} tabName="Sprint Cost Calculator"><StoryPointsCalculator darkMode={darkMode} /></ProtectedTab>}
+        {activeTab === 'commercial' && <ProtectedTab darkMode={darkMode} tabName="Quick Quote"><CommercialOfferCalculator darkMode={darkMode} /></ProtectedTab>}
+        {activeTab === 'proposal' && <ProtectedTab darkMode={darkMode} tabName="Client Proposal"><ClientProposalCalculator darkMode={darkMode} /></ProtectedTab>}
       </div>
     </div>
   );
