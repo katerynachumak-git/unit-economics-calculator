@@ -8,21 +8,32 @@ const supabase = createClient(
   'sb_publishable_bQTk9wute0V1Kn7PQnID2Q_8srHSTsb'
 );
 
-// Password Gate Component
-function PasswordGate({ onSuccess, darkMode, setDarkMode }) {
+// Login Component with Supabase Auth
+function LoginPage({ onSuccess, darkMode }) {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  
-  // Change this password to whatever you want
-  const CORRECT_PASSWORD = 'wlark';
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = () => {
-    if (password === CORRECT_PASSWORD) {
-      onSuccess();
-    } else {
-      setError(true);
-      setTimeout(() => setError(false), 2000);
+  const handleLogin = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
+      
+      if (authError) {
+        setError(authError.message);
+      } else if (data.session) {
+        onSuccess(data.session);
+      }
+    } catch (e) {
+      setError('Login failed. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -40,140 +51,63 @@ function PasswordGate({ onSuccess, darkMode, setDarkMode }) {
             <Lock className={`w-8 h-8 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
           </div>
           <h1 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Unit Economics Calculator</h1>
-          <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Enter password to continue</p>
+          <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Sign in to continue</p>
         </div>
         
-        <div className="relative mb-4">
-          <input
-            type={showPassword ? 'text' : 'password'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Password"
-            className={`w-full px-4 py-3 border rounded-lg pr-10 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
-              error 
-                ? 'border-red-500 bg-red-50' 
-                : darkMode 
+        <div className="space-y-4">
+          <div>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Email"
+              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
+                darkMode 
                   ? 'border-gray-600 bg-gray-700 text-white placeholder-gray-400' 
                   : 'border-gray-200'
-            }`}
-            autoFocus
-          />
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className={`absolute right-3 top-1/2 -translate-y-1/2 ${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'}`}
-          >
-            {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-          </button>
+              }`}
+              autoFocus
+              disabled={loading}
+            />
+          </div>
+          
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Password"
+              className={`w-full px-4 py-3 border rounded-lg pr-10 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
+                darkMode 
+                  ? 'border-gray-600 bg-gray-700 text-white placeholder-gray-400' 
+                  : 'border-gray-200'
+              }`}
+              disabled={loading}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className={`absolute right-3 top-1/2 -translate-y-1/2 ${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
         
         {error && (
-          <p className="text-red-500 text-sm mb-4 text-center">Incorrect password</p>
+          <p className="text-red-500 text-sm mt-4 text-center">{error}</p>
         )}
         
         <button
           type="button"
           onClick={handleLogin}
-          className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+          disabled={loading || !email || !password}
+          className="w-full mt-6 py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
         >
-          Access Calculator
+          {loading ? 'Signing in...' : 'Sign In'}
         </button>
-      </div>
-    </div>
-  );
-}
-
-// Tab Password Gate Component
-function TabPasswordGate({ tabName, onSuccess, onCancel, darkMode }) {
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  
-  // Tab-specific passwords - change these as needed
-  const TAB_PASSWORDS = {
-    transactions: 'finance',    // Transaction Cost tab
-    features: 'team',           // Team/Time tab
-    storypoints: 'sprint'       // Sprint Cost tab
-  };
-
-  const handleLogin = () => {
-    if (password === TAB_PASSWORDS[tabName]) {
-      onSuccess();
-    } else {
-      setError(true);
-      setTimeout(() => setError(false), 2000);
-    }
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter') {
-      handleLogin();
-    }
-  };
-
-  const tabLabels = {
-    transactions: 'Transaction Cost',
-    features: 'Team/Time',
-    storypoints: 'Sprint Cost'
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className={`rounded-xl shadow-lg p-6 w-full max-w-sm ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
-        <div className="text-center mb-4">
-          <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${darkMode ? 'bg-indigo-900' : 'bg-indigo-100'}`}>
-            <Lock className={`w-6 h-6 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
-          </div>
-          <h2 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{tabLabels[tabName]}</h2>
-          <p className={`text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>This tab requires a password</p>
-        </div>
-        
-        <div className="relative mb-4">
-          <input
-            type={showPassword ? 'text' : 'password'}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Tab password"
-            className={`w-full px-4 py-3 border rounded-lg pr-10 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
-              error 
-                ? 'border-red-500 bg-red-50' 
-                : darkMode 
-                  ? 'border-gray-600 bg-gray-700 text-white placeholder-gray-400' 
-                  : 'border-gray-200'
-            }`}
-            autoFocus
-          />
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className={`absolute right-3 top-1/2 -translate-y-1/2 ${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'}`}
-          >
-            {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-          </button>
-        </div>
-        
-        {error && (
-          <p className="text-red-500 text-sm mb-4 text-center">Incorrect password</p>
-        )}
-        
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className={`flex-1 py-2 rounded-lg font-medium ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700'}`}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleLogin}
-            className="flex-1 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
-          >
-            Unlock
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -2819,65 +2753,50 @@ function ClientProposalCalculator({ darkMode }) {
 
 // Main App
 export default function CalculatorApp() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('transactions');
   const [darkMode, setDarkMode] = useState(false);
   
-  // Per-tab passwords (set to empty string '' to disable password for that tab)
-  const TAB_PASSWORDS = {
-    transactions: '',           // No password - anyone can access
-    features: 'team2026',       // Password for Team/Time tab
-    storypoints: 'sprint2026',  // Password for Sprint Cost tab
-    commercial: 'sales2026',    // Password for Commercial Offer tab
-    proposal: 'proposal2026'    // Password for Client Proposal tab
-  };
-  
-  // Track which tabs are unlocked
-  const [unlockedTabs, setUnlockedTabs] = useState({
-    transactions: true,
-    features: false,
-    storypoints: false,
-    commercial: false,
-    proposal: false
-  });
-  
-  const [tabPasswordInput, setTabPasswordInput] = useState('');
-  const [tabPasswordError, setTabPasswordError] = useState(false);
-  
-  // Initialize unlocked tabs based on empty passwords
-  useState(() => {
-    const initialUnlocked = {};
-    Object.keys(TAB_PASSWORDS).forEach(tab => {
-      initialUnlocked[tab] = TAB_PASSWORDS[tab] === '';
+  // Check for existing session on mount
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoading(false);
     });
-    setUnlockedTabs(initialUnlocked);
-  });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+  };
 
   const tabs = [
-    { id: 'transactions', name: 'Transaction Cost', icon: <CreditCard className="w-4 h-4" />, hasPassword: TAB_PASSWORDS.transactions !== '' },
-    { id: 'features', name: 'Team/Time', icon: <Users className="w-4 h-4" />, hasPassword: TAB_PASSWORDS.features !== '' },
-    { id: 'storypoints', name: 'Sprint Cost', icon: <Code className="w-4 h-4" />, hasPassword: TAB_PASSWORDS.storypoints !== '' },
-    { id: 'commercial', name: 'Quick Quote', icon: <Calculator className="w-4 h-4" />, hasPassword: TAB_PASSWORDS.commercial !== '' },
-    { id: 'proposal', name: 'Client Proposal', icon: <Clock className="w-4 h-4" />, hasPassword: TAB_PASSWORDS.proposal !== '' },
+    { id: 'transactions', name: 'Transaction Cost', icon: <CreditCard className="w-4 h-4" /> },
+    { id: 'features', name: 'Team/Time', icon: <Users className="w-4 h-4" /> },
+    { id: 'storypoints', name: 'Sprint Cost', icon: <Code className="w-4 h-4" /> },
+    { id: 'commercial', name: 'Quick Quote', icon: <Calculator className="w-4 h-4" /> },
+    { id: 'proposal', name: 'Client Proposal', icon: <Clock className="w-4 h-4" /> },
   ];
-  
-  const isTabLocked = (tabId) => {
-    return TAB_PASSWORDS[tabId] !== '' && !unlockedTabs[tabId];
-  };
-  
-  const unlockTab = (tabId) => {
-    if (tabPasswordInput === TAB_PASSWORDS[tabId]) {
-      setUnlockedTabs({ ...unlockedTabs, [tabId]: true });
-      setTabPasswordInput('');
-      setTabPasswordError(false);
-    } else {
-      setTabPasswordError(true);
-      setTimeout(() => setTabPasswordError(false), 2000);
-    }
-  };
 
-  if (!isAuthenticated) {
-    return <PasswordGate onSuccess={() => setIsAuthenticated(true)} darkMode={darkMode} setDarkMode={setDarkMode} />;
+  if (loading) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center ${darkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
+        <div className={`text-lg ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <LoginPage onSuccess={setSession} darkMode={darkMode} />;
   }
 
   return (
@@ -2894,6 +2813,9 @@ export default function CalculatorApp() {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                {session.user.email}
+              </span>
               <button
                 onClick={() => setDarkMode(!darkMode)}
                 className={`p-2 rounded-lg ${darkMode ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
@@ -2901,11 +2823,11 @@ export default function CalculatorApp() {
                 {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
               <button
-                onClick={() => setIsAuthenticated(false)}
-                className={`text-sm flex items-center gap-1 ${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'}`}
+                onClick={handleLogout}
+                className={`text-sm flex items-center gap-1 px-3 py-1.5 rounded-lg ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
               >
                 <Lock className="w-4 h-4" />
-                Lock
+                Sign Out
               </button>
             </div>
           </div>
@@ -2930,65 +2852,17 @@ export default function CalculatorApp() {
               >
                 {tab.icon}
                 <span>{tab.name}</span>
-                {tab.hasPassword && !unlockedTabs[tab.id] && (
-                  <Lock className="w-3 h-3 text-amber-500" />
-                )}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Content - Show lock prompt if tab is locked */}
-        {isTabLocked(activeTab) ? (
-          <div className={`rounded-xl p-8 shadow-sm border ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-            <div className="text-center max-w-sm mx-auto">
-              <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${darkMode ? 'bg-amber-900/30' : 'bg-amber-100'}`}>
-                <Lock className={`w-8 h-8 ${darkMode ? 'text-amber-400' : 'text-amber-600'}`} />
-              </div>
-              <h2 className={`text-xl font-bold mb-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                {tabs.find(t => t.id === activeTab)?.name}
-              </h2>
-              <p className={`text-sm mb-6 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                This section requires a password to access
-              </p>
-              
-              <div className="space-y-3">
-                <input
-                  type="password"
-                  value={tabPasswordInput}
-                  onChange={(e) => setTabPasswordInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && unlockTab(activeTab)}
-                  placeholder="Enter password"
-                  className={`w-full px-4 py-3 border rounded-lg text-center focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 ${
-                    tabPasswordError
-                      ? 'border-red-500 bg-red-50'
-                      : darkMode
-                        ? 'border-gray-600 bg-gray-700 text-white placeholder-gray-400'
-                        : 'border-gray-200'
-                  }`}
-                  autoFocus
-                />
-                {tabPasswordError && (
-                  <p className="text-red-500 text-sm">Incorrect password</p>
-                )}
-                <button
-                  onClick={() => unlockTab(activeTab)}
-                  className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
-                >
-                  Unlock
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <>
-            {activeTab === 'transactions' && <TransactionCostCalculator darkMode={darkMode} />}
-            {activeTab === 'features' && <FeatureCostCalculator darkMode={darkMode} />}
-            {activeTab === 'storypoints' && <StoryPointsCalculator darkMode={darkMode} />}
-            {activeTab === 'commercial' && <CommercialOfferCalculator darkMode={darkMode} />}
-            {activeTab === 'proposal' && <ClientProposalCalculator darkMode={darkMode} />}
-          </>
-        )}
+        {/* Content */}
+        {activeTab === 'transactions' && <TransactionCostCalculator darkMode={darkMode} />}
+        {activeTab === 'features' && <FeatureCostCalculator darkMode={darkMode} />}
+        {activeTab === 'storypoints' && <StoryPointsCalculator darkMode={darkMode} />}
+        {activeTab === 'commercial' && <CommercialOfferCalculator darkMode={darkMode} />}
+        {activeTab === 'proposal' && <ClientProposalCalculator darkMode={darkMode} />}
       </div>
     </div>
   );
