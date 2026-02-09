@@ -193,7 +193,7 @@ function TabNav({ tabs, activeTab, setActiveTab, darkMode }) {
   );
 }
 
-// Transaction Cost Calculator with Baseline/Projected/Clients
+// Transaction Cost Calculator with Baseline/Projected/Clients - AUTO-SAVE VERSION
 function TransactionCostCalculator({ darkMode, supabase, userEmail }) {
   const [eurToUsd, setEurToUsd] = useState(1.08);
   const [saveStatus, setSaveStatus] = useState('');
@@ -254,6 +254,99 @@ function TransactionCostCalculator({ darkMode, supabase, userEmail }) {
     if (val >= 1000) return fmt(val / 1000, 0) + 'K';
     return fmtNum(val);
   };
+
+  // Serialize state for saving (handle Infinity)
+  const serializeState = () => {
+    const serializeCosts = (costs) => costs.map(c => ({
+      ...c,
+      tiers: c.tiers?.map(t => ({ ...t, upTo: t.upTo === Infinity ? 'Infinity' : t.upTo }))
+    }));
+    return {
+      eurToUsd, baselineYear, baselineAnnualTxn, baselineConversionRate,
+      baselineCosts: serializeCosts(baselineCosts),
+      projectedYear, projectedConversionRate,
+      projectedCosts: serializeCosts(projectedCosts),
+      clients, targetMargin,
+    };
+  };
+
+  // Deserialize state (handle Infinity)
+  const deserializeState = (data) => {
+    const deserializeCosts = (costs) => costs.map(c => ({
+      ...c,
+      tiers: c.tiers?.map(t => ({ ...t, upTo: t.upTo === 'Infinity' ? Infinity : t.upTo }))
+    }));
+    return {
+      ...data,
+      baselineCosts: deserializeCosts(data.baselineCosts),
+      projectedCosts: deserializeCosts(data.projectedCosts),
+    };
+  };
+
+  // Load state on mount
+  useEffect(() => {
+    const loadState = async () => {
+      if (!supabase || !userEmail) {
+        setIsLoading(false);
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('calculator_state')
+          .select('data')
+          .eq('user_email', userEmail)
+          .single();
+        
+        if (error && error.code !== 'PGRST116') throw error;
+        
+        if (data?.data) {
+          const d = deserializeState(data.data);
+          setEurToUsd(d.eurToUsd);
+          setBaselineYear(d.baselineYear);
+          setBaselineAnnualTxn(d.baselineAnnualTxn);
+          setBaselineConversionRate(d.baselineConversionRate);
+          setBaselineCosts(d.baselineCosts);
+          setProjectedYear(d.projectedYear);
+          setProjectedConversionRate(d.projectedConversionRate);
+          setProjectedCosts(d.projectedCosts);
+          setClients(d.clients);
+          setTargetMargin(d.targetMargin);
+        }
+      } catch (err) {
+        console.error('Error loading state:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadState();
+  }, [supabase, userEmail]);
+
+  // Auto-save with debounce
+  useEffect(() => {
+    if (isLoading || !supabase || !userEmail) return;
+    
+    const saveState = async () => {
+      setSaveStatus('saving');
+      try {
+        const { error } = await supabase
+          .from('calculator_state')
+          .upsert({
+            user_email: userEmail,
+            data: serializeState(),
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'user_email' });
+        
+        if (error) throw error;
+        setSaveStatus('saved');
+      } catch (err) {
+        console.error('Error saving:', err);
+        setSaveStatus('error');
+      }
+    };
+
+    const timer = setTimeout(saveState, 1500);
+    return () => clearTimeout(timer);
+  }, [eurToUsd, baselineYear, baselineAnnualTxn, baselineConversionRate, baselineCosts, projectedYear, projectedConversionRate, projectedCosts, clients, targetMargin, isLoading, supabase, userEmail]);
 
   // Cost calculation functions
   const getTieredAmount = (cost, monthlyVolume) => {
@@ -482,81 +575,48 @@ function TransactionCostCalculator({ darkMode, supabase, userEmail }) {
   const labelText = darkMode ? 'text-gray-400' : 'text-gray-500';
   const inputBg = darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-200';
 
+  if (isLoading) {
+    return (
+      <div className={`rounded-xl p-8 shadow-sm border text-center ${cardBg}`}>
+        <div className={`text-lg ${labelText}`}>Loading...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* SAVE/LOAD SCENARIOS */}
-      <div className={`rounded-xl p-4 shadow-sm border ${cardBg}`}>
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <Save className={`w-5 h-5 ${labelText}`} />
-            <input type="text" value={scenarioName} onChange={(e) => setScenarioName(e.target.value)} placeholder="Scenario name..." className={`px-3 py-2 border rounded-lg w-48 ${inputBg}`} />
-            <button onClick={saveScenario} disabled={!supabase} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2">
-              <Save className="w-4 h-4" /> Save
-            </button>
-            {saveStatus && <span className={`text-sm ${labelText}`}>{saveStatus}</span>}
-            {currentScenarioId && (
-              <button onClick={() => setShowHistory(!showHistory)} className={`flex items-center gap-2 px-3 py-2 rounded-lg ${showHistory ? 'bg-amber-100 text-amber-700' : darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                <History className="w-4 h-4" /> History {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`text-sm ${labelText}`}>EUR/USD:</span>
-            <input type="number" step="0.01" value={eurToUsd} onChange={(e) => setEurToUsd(parseFloat(e.target.value) || 1)} className={`w-16 px-2 py-1 border rounded text-center ${inputBg}`} />
-          </div>
+      {/* AUTO-SAVE STATUS BAR */}
+      <div className={`rounded-xl px-4 py-3 shadow-sm border flex items-center justify-between ${cardBg}`}>
+        <div className="flex items-center gap-3">
+          {saveStatus === 'saving' && (
+            <>
+              <Cloud className={`w-5 h-5 animate-pulse ${darkMode ? 'text-blue-400' : 'text-blue-500'}`} />
+              <span className={`text-sm ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>Saving...</span>
+            </>
+          )}
+          {saveStatus === 'saved' && (
+            <>
+              <Cloud className={`w-5 h-5 ${darkMode ? 'text-emerald-400' : 'text-emerald-500'}`} />
+              <span className={`text-sm ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>All changes saved</span>
+            </>
+          )}
+          {saveStatus === 'error' && (
+            <>
+              <CloudOff className={`w-5 h-5 ${darkMode ? 'text-red-400' : 'text-red-500'}`} />
+              <span className={`text-sm ${darkMode ? 'text-red-400' : 'text-red-600'}`}>Error saving</span>
+            </>
+          )}
+          {!saveStatus && (
+            <>
+              <Cloud className={`w-5 h-5 ${labelText}`} />
+              <span className={`text-sm ${labelText}`}>Auto-save enabled</span>
+            </>
+          )}
         </div>
-        
-        {savedScenarios.length > 0 && (
-          <div className={`mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-            <div className="flex items-center gap-2 flex-wrap">
-              <FolderOpen className={`w-4 h-4 ${labelText}`} />
-              <span className={`text-sm ${labelText}`}>Load:</span>
-              {savedScenarios.map(s => (
-                <div key={s.id} className="flex items-center gap-1">
-                  <button onClick={() => loadScenario(s)} className={`px-2 py-1 text-sm rounded ${currentScenarioId === s.id ? 'bg-indigo-100 text-indigo-700 font-medium' : darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-300' : 'bg-gray-100 hover:bg-gray-200'}`}>{s.name}</button>
-                  <button onClick={() => deleteScenario(s.id)} className={`p-1 ${darkMode ? 'text-gray-500 hover:text-red-400' : 'text-gray-400 hover:text-red-500'}`}><Trash2 className="w-3 h-3" /></button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        
-        {showHistory && currentScenarioId && (
-          <div className={`mt-3 pt-3 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-            <div className="flex items-center gap-2 mb-3">
-              <History className="w-4 h-4 text-amber-600" />
-              <span className={`text-sm font-medium ${cardText}`}>Version History</span>
-            </div>
-            {history.length === 0 ? (
-              <div className={`text-sm italic ${labelText}`}>No history available</div>
-            ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {history.map((h, idx) => (
-                  <div key={h.id} className={`p-3 rounded-lg border ${idx === 0 ? 'bg-amber-50 border-amber-200' : darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'}`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-sm font-bold ${idx === 0 ? 'text-amber-700' : darkMode ? 'text-gray-300' : 'text-gray-600'}`}>v{h.version_number}</span>
-                        {idx === 0 && <span className="text-xs bg-amber-200 text-amber-800 px-2 py-0.5 rounded">current</span>}
-                      </div>
-                      <button onClick={() => loadHistoryVersion(h)} className="text-xs text-indigo-600 hover:text-indigo-800">Restore</button>
-                    </div>
-                    <div className={`mt-1 flex items-center gap-2 text-xs ${labelText}`}>
-                      <Clock className="w-3 h-3" />
-                      {new Date(h.created_at).toLocaleString()}
-                    </div>
-                    <div className="mt-1 flex items-center gap-2 text-xs">
-                      <span className={labelText}>by</span>
-                      <span className={`font-medium ${cardText}`}>{h.changed_by_email || h.changed_by}</span>
-                    </div>
-                    <div className={`mt-2 text-xs p-2 rounded border ${darkMode ? 'bg-gray-800 border-gray-600 text-gray-300' : 'bg-white border-gray-100 text-gray-600'}`}>{h.change_summary}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        
-        {!supabase && <div className="mt-2 text-sm text-amber-600">⚠️ Supabase not connected. Saving disabled.</div>}
+        <div className="flex items-center gap-2">
+          <span className={`text-sm ${labelText}`}>EUR/USD:</span>
+          <input type="number" step="0.01" value={eurToUsd} onChange={(e) => setEurToUsd(parseFloat(e.target.value) || 1)} className={`w-16 px-2 py-1 border rounded text-center ${inputBg}`} />
+        </div>
       </div>
 
       {/* SECTION 1: BASELINE */}
@@ -886,12 +946,7 @@ function FeatureCostCalculator({ darkMode }) {
         <div className="flex items-center gap-4">
           <div>
             <label className={`block text-sm mb-1 ${labelText}`}>Duration (weeks)</label>
-            <input
-              type="number"
-              value={durationWeeks}
-              onChange={(e) => setDurationWeeks(parseInt(e.target.value) || 0)}
-              className={`w-24 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 ${inputBg}`}
-            />
+            <input type="number" value={durationWeeks} onChange={(e) => setDurationWeeks(parseInt(e.target.value) || 0)} className={`w-24 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 ${inputBg}`} />
           </div>
           <div className={labelText}>=</div>
           <div className={`rounded-lg px-4 py-2 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
@@ -918,39 +973,18 @@ function FeatureCostCalculator({ darkMode }) {
           {membersWithCalcs.map((member) => (
             <div key={member.id} className={`grid grid-cols-12 gap-2 items-center rounded-lg p-2 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
               <div className="col-span-3">
-                <input
-                  type="text"
-                  value={member.role}
-                  onChange={(e) => updateMember(member.id, 'role', e.target.value)}
-                  className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`}
-                />
+                <input type="text" value={member.role} onChange={(e) => updateMember(member.id, 'role', e.target.value)} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`} />
               </div>
               <div className="col-span-2">
-                <input
-                  type="number"
-                  value={member.monthlySalary}
-                  onChange={(e) => updateMember(member.id, 'monthlySalary', e.target.value)}
-                  className={`w-full px-2 py-1 border rounded text-right text-sm ${inputBg}`}
-                />
+                <input type="number" value={member.monthlySalary} onChange={(e) => updateMember(member.id, 'monthlySalary', e.target.value)} className={`w-full px-2 py-1 border rounded text-right text-sm ${inputBg}`} />
               </div>
               <div className="col-span-2">
-                <input
-                  type="number"
-                  value={member.allocation}
-                  onChange={(e) => updateMember(member.id, 'allocation', e.target.value)}
-                  className={`w-full px-2 py-1 border rounded text-center text-sm ${inputBg}`}
-                />
+                <input type="number" value={member.allocation} onChange={(e) => updateMember(member.id, 'allocation', e.target.value)} className={`w-full px-2 py-1 border rounded text-center text-sm ${inputBg}`} />
               </div>
-              <div className={`col-span-2 text-right text-sm ${labelText}`}>
-                {fmt(member.daysWorked, 1)}
-              </div>
-              <div className={`col-span-2 text-right text-sm font-medium ${cardText}`}>
-                €{fmt(member.cost)}
-              </div>
+              <div className={`col-span-2 text-right text-sm ${labelText}`}>{fmt(member.daysWorked, 1)}</div>
+              <div className={`col-span-2 text-right text-sm font-medium ${cardText}`}>€{fmt(member.cost)}</div>
               <div className="col-span-1 text-right">
-                <button onClick={() => deleteMember(member.id)} className="p-1 text-gray-400 hover:text-red-500">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <button onClick={() => deleteMember(member.id)} className="p-1 text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
               </div>
             </div>
           ))}
@@ -958,37 +992,17 @@ function FeatureCostCalculator({ darkMode }) {
           {/* Add new */}
           <div className={`grid grid-cols-12 gap-2 items-center border-t border-dashed pt-3 mt-4 ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
             <div className="col-span-3">
-              <input
-                type="text"
-                placeholder="Role..."
-                value={newMember.role}
-                onChange={(e) => setNewMember({...newMember, role: e.target.value})}
-                className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`}
-              />
+              <input type="text" placeholder="Role..." value={newMember.role} onChange={(e) => setNewMember({...newMember, role: e.target.value})} className={`w-full px-2 py-1 border rounded text-sm ${inputBg}`} />
             </div>
             <div className="col-span-2">
-              <input
-                type="number"
-                placeholder="Salary"
-                value={newMember.monthlySalary}
-                onChange={(e) => setNewMember({...newMember, monthlySalary: e.target.value})}
-                className={`w-full px-2 py-1 border rounded text-right text-sm ${inputBg}`}
-              />
+              <input type="number" placeholder="Salary" value={newMember.monthlySalary} onChange={(e) => setNewMember({...newMember, monthlySalary: e.target.value})} className={`w-full px-2 py-1 border rounded text-right text-sm ${inputBg}`} />
             </div>
             <div className="col-span-2">
-              <input
-                type="number"
-                placeholder="100"
-                value={newMember.allocation}
-                onChange={(e) => setNewMember({...newMember, allocation: e.target.value})}
-                className={`w-full px-2 py-1 border rounded text-center text-sm ${inputBg}`}
-              />
+              <input type="number" placeholder="100" value={newMember.allocation} onChange={(e) => setNewMember({...newMember, allocation: e.target.value})} className={`w-full px-2 py-1 border rounded text-center text-sm ${inputBg}`} />
             </div>
             <div className="col-span-4"></div>
             <div className="col-span-1">
-              <button onClick={addMember} className="p-1 bg-indigo-600 text-white rounded hover:bg-indigo-700">
-                <Plus className="w-4 h-4" />
-              </button>
+              <button onClick={addMember} className="p-1 bg-indigo-600 text-white rounded hover:bg-indigo-700"><Plus className="w-4 h-4" /></button>
             </div>
           </div>
         </div>
@@ -1012,12 +1026,7 @@ function FeatureCostCalculator({ darkMode }) {
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-2">
               <span className="opacity-75">Contingency</span>
-              <input
-                type="number"
-                value={contingencyPct}
-                onChange={(e) => setContingencyPct(parseFloat(e.target.value) || 0)}
-                className="w-16 px-2 py-1 rounded bg-white/20 text-white text-center text-sm"
-              />
+              <input type="number" value={contingencyPct} onChange={(e) => setContingencyPct(parseFloat(e.target.value) || 0)} className="w-16 px-2 py-1 rounded bg-white/20 text-white text-center text-sm" />
               <span className="opacity-75">%</span>
             </div>
             <span className="font-medium">€{fmt(contingency)}</span>
@@ -1062,7 +1071,7 @@ function StoryPointsCalculator({ darkMode }) {
   const [lastSaved, setLastSaved] = useState(null);
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [showSprintPreview, setShowSprintPreview] = useState(false);
-  const [syncStatus, setSyncStatus] = useState('idle'); // 'idle', 'syncing', 'synced', 'error'
+  const [syncStatus, setSyncStatus] = useState('idle');
   const [sprintId, setSprintId] = useState(null);
   
   const cardBg = darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200';
@@ -1071,49 +1080,21 @@ function StoryPointsCalculator({ darkMode }) {
   const inputBg = darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-200';
   
   const [teams, setTeams] = useState([
-    { 
-      id: 'red', 
-      name: 'Red', 
-      color: 'bg-red-500',
-      colorLight: 'bg-red-50',
-      colorText: 'text-red-500',
-      features: [
-        { id: 1, name: 'Payment retry logic', issueKey: '', storyPoints: 5, billable: false },
-        { id: 2, name: 'Client ABC custom flow', issueKey: '', storyPoints: 3, billable: true },
-      ]
-    },
-    { 
-      id: 'green', 
-      name: 'Green', 
-      color: 'bg-green-500',
-      colorLight: 'bg-green-50',
-      colorText: 'text-green-500',
-      features: [
-        { id: 1, name: 'Merchant dashboard', issueKey: '', storyPoints: 8, billable: false },
-        { id: 2, name: 'Export reports', issueKey: '', storyPoints: 5, billable: false },
-      ]
-    },
-    { 
-      id: 'blue', 
-      name: 'Blue', 
-      color: 'bg-blue-500',
-      colorLight: 'bg-blue-50',
-      colorText: 'text-blue-500',
-      features: [
-        { id: 1, name: 'API rate limiting', issueKey: '', storyPoints: 8, billable: false },
-      ]
-    },
-    { 
-      id: 'yellow', 
-      name: 'Yellow', 
-      color: 'bg-yellow-500',
-      colorLight: 'bg-yellow-50',
-      colorText: 'text-yellow-500',
-      features: [
-        { id: 1, name: 'Client XYZ integration', issueKey: '', storyPoints: 3, billable: true },
-        { id: 2, name: 'Grafana dashboards', issueKey: '', storyPoints: 5, billable: false },
-      ]
-    },
+    { id: 'red', name: 'Red', color: 'bg-red-500', colorLight: 'bg-red-50', colorText: 'text-red-500', features: [
+      { id: 1, name: 'Payment retry logic', issueKey: '', storyPoints: 5, billable: false },
+      { id: 2, name: 'Client ABC custom flow', issueKey: '', storyPoints: 3, billable: true },
+    ]},
+    { id: 'green', name: 'Green', color: 'bg-green-500', colorLight: 'bg-green-50', colorText: 'text-green-500', features: [
+      { id: 1, name: 'Merchant dashboard', issueKey: '', storyPoints: 8, billable: false },
+      { id: 2, name: 'Export reports', issueKey: '', storyPoints: 5, billable: false },
+    ]},
+    { id: 'blue', name: 'Blue', color: 'bg-blue-500', colorLight: 'bg-blue-50', colorText: 'text-blue-500', features: [
+      { id: 1, name: 'API rate limiting', issueKey: '', storyPoints: 8, billable: false },
+    ]},
+    { id: 'yellow', name: 'Yellow', color: 'bg-yellow-500', colorLight: 'bg-yellow-50', colorText: 'text-yellow-500', features: [
+      { id: 1, name: 'Client XYZ integration', issueKey: '', storyPoints: 3, billable: true },
+      { id: 2, name: 'Grafana dashboards', issueKey: '', storyPoints: 5, billable: false },
+    ]},
   ]);
 
   const [sprintHistory, setSprintHistory] = useState([]);
@@ -1131,14 +1112,8 @@ function StoryPointsCalculator({ darkMode }) {
     const loadFromSupabase = async () => {
       try {
         setSyncStatus('syncing');
-        const { data, error } = await supabase
-          .from('sprints')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(1);
-        
+        const { data, error } = await supabase.from('sprints').select('*').order('created_at', { ascending: false }).limit(1);
         if (error) throw error;
-        
         if (data && data.length > 0) {
           const sprint = data[0];
           setSprintId(sprint.id);
@@ -1151,7 +1126,6 @@ function StoryPointsCalculator({ darkMode }) {
       } catch (e) {
         console.error('Failed to load from Supabase:', e);
         setSyncStatus('error');
-        // Fallback to localStorage
         try {
           const saved = localStorage.getItem('sprintCalculatorDraft');
           if (saved) {
@@ -1160,51 +1134,25 @@ function StoryPointsCalculator({ darkMode }) {
             if (localData.sprintName) setSprintName(localData.sprintName);
             if (localData.costPerSP) setCostPerSP(localData.costPerSP);
           }
-        } catch (le) {
-          console.error('Failed to load local draft:', le);
-        }
+        } catch (le) { console.error('Failed to load local draft:', le); }
       }
     };
     loadFromSupabase();
   }, []);
 
-  // Save to Supabase
   const saveDraft = async () => {
     try {
       setSyncStatus('syncing');
-      const sprintData = {
-        name: sprintName,
-        cost_per_sp: costPerSP,
-        teams: teams,
-      };
-      
+      const sprintData = { name: sprintName, cost_per_sp: costPerSP, teams: teams };
       let result;
       if (sprintId) {
-        // Update existing
-        result = await supabase
-          .from('sprints')
-          .update(sprintData)
-          .eq('id', sprintId)
-          .select();
+        result = await supabase.from('sprints').update(sprintData).eq('id', sprintId).select();
       } else {
-        // Insert new
-        result = await supabase
-          .from('sprints')
-          .insert(sprintData)
-          .select();
+        result = await supabase.from('sprints').insert(sprintData).select();
       }
-      
       if (result.error) throw result.error;
-      
-      if (result.data && result.data[0]) {
-        setSprintId(result.data[0].id);
-      }
-      
-      // Also save to localStorage as backup
-      localStorage.setItem('sprintCalculatorDraft', JSON.stringify({
-        teams, sprintName, costPerSP, sprintHistory, savedAt: new Date().toISOString()
-      }));
-      
+      if (result.data && result.data[0]) setSprintId(result.data[0].id);
+      localStorage.setItem('sprintCalculatorDraft', JSON.stringify({ teams, sprintName, costPerSP, sprintHistory, savedAt: new Date().toISOString() }));
       setLastSaved(new Date());
       setSyncStatus('synced');
       setShowSaveConfirm(true);
@@ -1212,31 +1160,22 @@ function StoryPointsCalculator({ darkMode }) {
     } catch (e) {
       console.error('Failed to save to Supabase:', e);
       setSyncStatus('error');
-      // Save to localStorage as fallback
       try {
-        localStorage.setItem('sprintCalculatorDraft', JSON.stringify({
-          teams, sprintName, costPerSP, sprintHistory, savedAt: new Date().toISOString()
-        }));
+        localStorage.setItem('sprintCalculatorDraft', JSON.stringify({ teams, sprintName, costPerSP, sprintHistory, savedAt: new Date().toISOString() }));
         setLastSaved(new Date());
         setShowSaveConfirm(true);
         setTimeout(() => setShowSaveConfirm(false), 2000);
-      } catch (le) {
-        console.error('Failed to save locally:', le);
-      }
+      } catch (le) { console.error('Failed to save locally:', le); }
     }
   };
 
-  // Clear draft function
   const clearDraft = async () => {
     if (confirm('Clear all saved data? This cannot be undone.')) {
       try {
-        if (sprintId) {
-          await supabase.from('sprints').delete().eq('id', sprintId);
-        }
+        if (sprintId) await supabase.from('sprints').delete().eq('id', sprintId);
         localStorage.removeItem('sprintCalculatorDraft');
         setSprintId(null);
         setLastSaved(null);
-        // Reset to defaults
         setTeams([
           { id: 'red', name: 'Red', color: 'bg-red-500', colorLight: 'bg-red-50', colorText: 'text-red-500', features: [] },
           { id: 'green', name: 'Green', color: 'bg-green-500', colorLight: 'bg-green-50', colorText: 'text-green-500', features: [] },
@@ -1246,9 +1185,7 @@ function StoryPointsCalculator({ darkMode }) {
         setSprintHistory([]);
         setSprintName('Sprint 1');
         setSyncStatus('idle');
-      } catch (e) {
-        console.error('Failed to clear:', e);
-      }
+      } catch (e) { console.error('Failed to clear:', e); }
     }
   };
 
@@ -1272,306 +1209,123 @@ function StoryPointsCalculator({ darkMode }) {
   const updateFeature = (teamId, featureId, field, value) => {
     setTeams(teams.map(team => {
       if (team.id !== teamId) return team;
-      return {
-        ...team,
-        features: team.features.map(f => 
-          f.id === featureId ? { ...f, [field]: field === 'name' ? value : field === 'billable' ? value : parseFloat(value) || 0 } : f
-        )
-      };
+      return { ...team, features: team.features.map(f => f.id === featureId ? { ...f, [field]: field === 'name' ? value : field === 'billable' ? value : parseFloat(value) || 0 } : f) };
     }));
   };
 
   const deleteFeature = (teamId, featureId) => {
-    setTeams(teams.map(team => {
-      if (team.id !== teamId) return team;
-      return { ...team, features: team.features.filter(f => f.id !== featureId) };
-    }));
+    setTeams(teams.map(team => team.id !== teamId ? team : { ...team, features: team.features.filter(f => f.id !== featureId) }));
   };
 
   const addFeature = (teamId) => {
     const newFeature = newFeatures[teamId];
     if (newFeature.name && newFeature.storyPoints) {
-      setTeams(teams.map(team => {
-        if (team.id !== teamId) return team;
-        return {
-          ...team,
-          features: [...team.features, { 
-            id: Date.now(), 
-            name: newFeature.name,
-            issueKey: '',
-            storyPoints: parseFloat(newFeature.storyPoints),
-            billable: false
-          }]
-        };
-      }));
+      setTeams(teams.map(team => team.id !== teamId ? team : { ...team, features: [...team.features, { id: Date.now(), name: newFeature.name, issueKey: '', storyPoints: parseFloat(newFeature.storyPoints), billable: false }] }));
       setNewFeatures({ ...newFeatures, [teamId]: { name: '', storyPoints: '' } });
     }
   };
 
   const clearTeam = (teamId) => {
-    setTeams(teams.map(team => {
-      if (team.id !== teamId) return team;
-      return { ...team, features: [] };
-    }));
+    setTeams(teams.map(team => team.id !== teamId ? team : { ...team, features: [] }));
   };
 
   const saveSprint = () => {
     const sprintData = {
-      id: Date.now(),
-      name: sprintName,
-      date: new Date().toLocaleDateString(),
-      costPerSP,
-      teams: teamsWithCalcs.map(t => ({
-        id: t.id,
-        name: t.name,
-        totalSP: t.totalSP,
-        totalCost: t.totalCost,
-        billableSP: t.billableSP,
-        billableCost: t.billableCost,
-        internalSP: t.internalSP,
-        internalCost: t.internalCost,
-        features: t.features.map(f => ({ name: f.name, issueKey: f.issueKey, storyPoints: f.storyPoints, billable: f.billable }))
-      })),
-      grandTotalSP,
-      grandTotalCost,
-      grandBillableSP,
-      grandBillableCost,
-      grandInternalSP,
-      grandInternalCost
+      id: Date.now(), name: sprintName, date: new Date().toLocaleDateString(), costPerSP,
+      teams: teamsWithCalcs.map(t => ({ id: t.id, name: t.name, totalSP: t.totalSP, totalCost: t.totalCost, billableSP: t.billableSP, billableCost: t.billableCost, internalSP: t.internalSP, internalCost: t.internalCost, features: t.features.map(f => ({ name: f.name, issueKey: f.issueKey, storyPoints: f.storyPoints, billable: f.billable })) })),
+      grandTotalSP, grandTotalCost, grandBillableSP, grandBillableCost, grandInternalSP, grandInternalCost
     };
     setSprintHistory([sprintData, ...sprintHistory]);
-    
-    // Clear current sprint and increment name
     const sprintNum = parseInt(sprintName.match(/\d+/)?.[0] || '0') + 1;
     setSprintName(`Sprint ${sprintNum}`);
     setTeams(teams.map(team => ({ ...team, features: [] })));
   };
 
-  const deleteSprint = (sprintId) => {
-    setSprintHistory(sprintHistory.filter(s => s.id !== sprintId));
-  };
-
-  const exportToCSV = () => {
-    let csv = 'Sprint,Team,Issue Key,Feature,Story Points,Cost (€),Billable\n';
-    
-    // Current sprint
-    teamsWithCalcs.forEach(team => {
-      team.features.forEach(feature => {
-        csv += `"${sprintName}","${team.name}","${feature.issueKey || ''}","${feature.name}",${feature.storyPoints},${feature.storyPoints * costPerSP},${feature.billable ? 'Yes' : 'No'}\n`;
-      });
-    });
-    
-    // History
-    sprintHistory.forEach(sprint => {
-      sprint.teams.forEach(team => {
-        team.features.forEach(feature => {
-          csv += `"${sprint.name}","${team.name}","${feature.issueKey || ''}","${feature.name}",${feature.storyPoints},${feature.storyPoints * sprint.costPerSP},${feature.billable ? 'Yes' : 'No'}\n`;
-        });
-      });
-    });
-
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `sprint-costs-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const exportSummaryCSV = () => {
-    let csv = 'Sprint,Date,Total SP,Total Cost,Billable SP,Billable Cost,Internal SP,Internal Cost\n';
-    
-    // Current sprint
-    csv += `"${sprintName}","${new Date().toLocaleDateString()}",${grandTotalSP},${grandTotalCost},${grandBillableSP},${grandBillableCost},${grandInternalSP},${grandInternalCost}\n`;
-    
-    // History
-    sprintHistory.forEach(sprint => {
-      csv += `"${sprint.name}","${sprint.date}",${sprint.grandTotalSP},${sprint.grandTotalCost},${sprint.grandBillableSP || 0},${sprint.grandBillableCost || 0},${sprint.grandInternalSP || sprint.grandTotalSP},${sprint.grandInternalCost || sprint.grandTotalCost}\n`;
-    });
-
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `sprint-summary-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const deleteSprint = (sprintId) => setSprintHistory(sprintHistory.filter(s => s.id !== sprintId));
 
   const fmt = (val, dec = 0) => new Intl.NumberFormat('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(val);
 
-  // CSV Import functions
+  // CSV Import
   const parseCSV = (text) => {
     const lines = text.split('\n').filter(line => line.trim());
     if (lines.length < 2) return null;
-    
-    // Parse header - handle quoted values
     const parseRow = (line) => {
       const result = [];
-      let current = '';
-      let inQuotes = false;
-      
+      let current = '', inQuotes = false;
       for (let i = 0; i < line.length; i++) {
         const char = line[i];
-        if (char === '"') {
-          inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-          result.push(current.trim());
-          current = '';
-        } else {
-          current += char;
-        }
+        if (char === '"') inQuotes = !inQuotes;
+        else if (char === ',' && !inQuotes) { result.push(current.trim()); current = ''; }
+        else current += char;
       }
       result.push(current.trim());
       return result;
     };
-    
     const header = parseRow(lines[0]).map(h => h.toLowerCase());
-    
-    // Find column indices - flexible matching for Jira exports
     const summaryIdx = header.findIndex(h => h === 'summary' || h.includes('title'));
     const teamIdx = header.findIndex(h => h === 'team name' || h === 'team');
     const spIdx = header.findIndex(h => h.includes('story point'));
     const clientIdx = header.findIndex(h => h.includes('client'));
     const issueKeyIdx = header.findIndex(h => h === 'issue key' || h === 'key');
-    
-    console.log('Headers found:', header);
-    console.log('Column indices - Summary:', summaryIdx, 'Team:', teamIdx, 'SP:', spIdx, 'Client:', clientIdx, 'Issue Key:', issueKeyIdx);
-    
-    if (summaryIdx === -1) {
-      return { error: `Missing "Summary" column. Found columns: ${header.slice(0, 10).join(', ')}...` };
-    }
-    if (teamIdx === -1) {
-      return { error: `Missing "Team Name" column. Found columns: ${header.slice(0, 10).join(', ')}...` };
-    }
-    if (spIdx === -1) {
-      return { error: `Missing "Story Points" column. Found columns: ${header.slice(0, 10).join(', ')}...` };
-    }
-    
-    // Parse rows
-    const features = [];
-    const skipped = [];
-    
+    if (summaryIdx === -1) return { error: `Missing "Summary" column.` };
+    if (teamIdx === -1) return { error: `Missing "Team Name" column.` };
+    if (spIdx === -1) return { error: `Missing "Story Points" column.` };
+    const features = [], skipped = [];
     for (let i = 1; i < lines.length; i++) {
       const values = parseRow(lines[i]);
-      
       const name = values[summaryIdx] || '';
       const teamName = (values[teamIdx] || '').toLowerCase();
-      const spRaw = values[spIdx] || '';
-      const sp = parseFloat(spRaw) || 0;
+      const sp = parseFloat(values[spIdx] || '') || 0;
       const client = clientIdx !== -1 ? (values[clientIdx] || '') : '';
       const issueKey = issueKeyIdx !== -1 ? (values[issueKeyIdx] || '') : '';
-      
-      // Map team name to team id
       let teamId = null;
       if (teamName.includes('red')) teamId = 'red';
       else if (teamName.includes('green')) teamId = 'green';
       else if (teamName.includes('blue')) teamId = 'blue';
       else if (teamName.includes('yellow')) teamId = 'yellow';
-      
-      if (!name) continue; // Skip empty rows
-      
-      if (sp === 0) {
-        skipped.push({ name, issueKey, reason: 'No Story Points', teamId, teamName });
-        continue;
-      }
-      
-      if (!teamId) {
-        skipped.push({ name, issueKey, reason: `Unknown team: "${teamName}"`, teamId: null, teamName });
-        continue;
-      }
-      
-      features.push({
-        id: Date.now() + i,
-        name,
-        issueKey,
-        storyPoints: sp,
-        billable: client && client.trim() !== '',
-        teamId,
-        client: client || null
-      });
+      if (!name) continue;
+      if (sp === 0) { skipped.push({ name, issueKey, reason: 'No Story Points', teamId, teamName }); continue; }
+      if (!teamId) { skipped.push({ name, issueKey, reason: `Unknown team: "${teamName}"`, teamId: null, teamName }); continue; }
+      features.push({ id: Date.now() + i, name, issueKey, storyPoints: sp, billable: client && client.trim() !== '', teamId, client: client || null });
     }
-    
     return { features, skipped, hasClientColumn: clientIdx !== -1 };
   };
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-    
     const reader = new FileReader();
     reader.onload = (e) => {
-      const text = e.target.result;
-      const result = parseCSV(text);
-      
-      if (result?.error) {
-        setImportError(result.error);
-        setImportPreview(null);
-      } else if (result?.features?.length > 0) {
-        setImportPreview(result);
-        setImportError(null);
-      } else {
-        setImportError('No valid features found in CSV');
-        setImportPreview(null);
-      }
+      const result = parseCSV(e.target.result);
+      if (result?.error) { setImportError(result.error); setImportPreview(null); }
+      else if (result?.features?.length > 0) { setImportPreview(result); setImportError(null); }
+      else { setImportError('No valid features found in CSV'); setImportPreview(null); }
     };
     reader.readAsText(file);
-    event.target.value = ''; // Reset input
+    event.target.value = '';
   };
 
   const confirmImport = () => {
     if (!importPreview?.features) return;
-    
-    setTeams(teams.map(team => ({
-      ...team,
-      features: [
-        ...team.features,
-        ...importPreview.features
-          .filter(f => f.teamId === team.id)
-          .map(f => ({ id: f.id, name: f.name, issueKey: f.issueKey, storyPoints: f.storyPoints, billable: f.billable }))
-      ]
-    })));
-    
+    setTeams(teams.map(team => ({ ...team, features: [...team.features, ...importPreview.features.filter(f => f.teamId === team.id).map(f => ({ id: f.id, name: f.name, issueKey: f.issueKey, storyPoints: f.storyPoints, billable: f.billable }))] })));
     setImportPreview(null);
   };
 
-  const cancelImport = () => {
-    setImportPreview(null);
-    setImportError(null);
-  };
+  const cancelImport = () => { setImportPreview(null); setImportError(null); };
 
   return (
     <div className="space-y-6">
-      {/* Hidden file input */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileUpload}
-        accept=".csv"
-        className="hidden"
-      />
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
 
       {/* Import Preview Modal */}
       {(importPreview || importError) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className={`rounded-xl p-6 max-w-2xl w-full max-h-[80vh] overflow-auto ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
-            <h3 className={`text-lg font-bold mb-4 ${cardText}`}>
-              {importError ? 'Import Error' : 'Import Preview'}
-            </h3>
-            
-            {importError && (
-              <div className="bg-red-100 text-red-700 p-4 rounded-lg mb-4">
-                {importError}
-              </div>
-            )}
-            
+            <h3 className={`text-lg font-bold mb-4 ${cardText}`}>{importError ? 'Import Error' : 'Import Preview'}</h3>
+            {importError && <div className="bg-red-100 text-red-700 p-4 rounded-lg mb-4">{importError}</div>}
             {importPreview && (
               <>
-                <p className={`mb-4 ${labelText}`}>
-                  Found {importPreview.features.length} features to import:
-                </p>
-                
+                <p className={`mb-4 ${labelText}`}>Found {importPreview.features.length} features to import:</p>
                 <div className="space-y-2 mb-4 max-h-60 overflow-auto">
                   {['red', 'green', 'blue', 'yellow'].map(teamId => {
                     const teamFeatures = importPreview.features.filter(f => f.teamId === teamId);
@@ -1581,236 +1335,32 @@ function StoryPointsCalculator({ darkMode }) {
                         <div className={`font-semibold capitalize mb-2 ${cardText}`}>{teamId} Team ({teamFeatures.length})</div>
                         {teamFeatures.map(f => (
                           <div key={f.id} className={`flex items-center gap-2 text-sm py-1 ${labelText}`}>
-                            <span className={`px-1 rounded text-xs ${f.billable ? 'bg-emerald-500 text-white' : darkMode ? 'bg-gray-600' : 'bg-gray-200'}`}>
-                              {f.billable ? '€' : '—'}
-                            </span>
-                            {f.issueKey && (
-                              <span className={`text-xs font-mono ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{f.issueKey}</span>
-                            )}
+                            <span className={`px-1 rounded text-xs ${f.billable ? 'bg-emerald-500 text-white' : darkMode ? 'bg-gray-600' : 'bg-gray-200'}`}>{f.billable ? '€' : '—'}</span>
+                            {f.issueKey && <span className={`text-xs font-mono ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`}>{f.issueKey}</span>}
                             <span className="flex-1 truncate">{f.name}</span>
                             <span>{f.storyPoints} SP</span>
-                            {f.client && <span className="text-emerald-500">({f.client})</span>}
                           </div>
                         ))}
                       </div>
                     );
                   })}
                 </div>
-                
-                {importPreview.skipped && importPreview.skipped.length > 0 && (
+                {importPreview.skipped?.length > 0 && (
                   <div className="bg-amber-100 text-amber-800 p-4 rounded-lg mb-4">
-                    <div className="font-semibold mb-2">⚠️ {importPreview.skipped.length} item(s) will be skipped:</div>
-                    <div className="space-y-1 text-sm max-h-32 overflow-auto">
-                      {importPreview.skipped.map((item, idx) => (
-                        <div key={idx} className="flex items-center gap-2">
-                          <span className="text-amber-600">•</span>
-                          {item.issueKey && (
-                            <span className="text-xs font-mono text-amber-700">{item.issueKey}</span>
-                          )}
-                          <span className="flex-1 truncate">{item.name}</span>
-                          <span className="text-amber-600 text-xs">({item.reason})</span>
-                        </div>
-                      ))}
-                    </div>
+                    <div className="font-semibold mb-2">⚠️ {importPreview.skipped.length} item(s) will be skipped</div>
                   </div>
-                )}
-                
-                {!importPreview.hasClientColumn && (
-                  <p className={`text-sm mb-4 ${labelText}`}>
-                    ⚠️ No "Client" column found - all features will be marked as internal. You can toggle billable status manually after import.
-                  </p>
                 )}
               </>
             )}
-            
             <div className="flex gap-2 justify-end">
-              <button
-                onClick={cancelImport}
-                className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700'}`}
-              >
-                Cancel
-              </button>
-              {importPreview && (
-                <button
-                  onClick={confirmImport}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-                >
-                  Import {importPreview.features.length} Features
-                </button>
-              )}
+              <button onClick={cancelImport} className={`px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700'}`}>Cancel</button>
+              {importPreview && <button onClick={confirmImport} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Import {importPreview.features.length} Features</button>}
             </div>
           </div>
         </div>
       )}
 
-      {/* Sprint Preview Modal */}
-      {showSprintPreview && (
-        <>
-          <style>{`
-            @media print {
-              body * { visibility: hidden !important; }
-              #sprint-modal, #sprint-modal * { visibility: visible !important; }
-              #sprint-modal { 
-                position: absolute !important; 
-                left: 0 !important; 
-                top: 0 !important; 
-                width: 100% !important;
-                padding: 20px !important;
-                background: white !important;
-              }
-              .print-hide { display: none !important; }
-              * {
-                -webkit-print-color-adjust: exact !important;
-                print-color-adjust: exact !important;
-                color-adjust: exact !important;
-              }
-              .bg-violet-600 { background-color: #7c3aed !important; }
-              .bg-emerald-600 { background-color: #059669 !important; }
-              .bg-gray-600 { background-color: #4b5563 !important; }
-              .bg-red-500 { background-color: #ef4444 !important; }
-              .bg-green-500 { background-color: #22c55e !important; }
-              .bg-blue-500 { background-color: #3b82f6 !important; }
-              .bg-yellow-500 { background-color: #eab308 !important; }
-              .bg-gray-100 { background-color: #f3f4f6 !important; }
-              .bg-emerald-100 { background-color: #d1fae5 !important; }
-              .text-violet-600 { color: #7c3aed !important; }
-              .text-emerald-600 { color: #059669 !important; }
-              .text-emerald-700 { color: #047857 !important; }
-              .text-indigo-600 { color: #4f46e5 !important; }
-              .border-violet-600 { border-color: #7c3aed !important; }
-            }
-          `}</style>
-          <div id="sprint-modal" className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 print:p-0 print:bg-white print:block">
-            <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-auto print:max-h-none print:shadow-none print:rounded-none print:max-w-none print:overflow-visible">
-              {/* Modal Header */}
-              <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center print-hide">
-                <h2 className="font-bold text-lg text-gray-800">Sprint Report Preview</h2>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => window.print()}
-                    className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700"
-                  >
-                    Print / PDF
-                  </button>
-                  <button
-                    onClick={() => setShowSprintPreview(false)}
-                    className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-            
-            {/* Modal Content */}
-            <div className="p-6 print:p-8">
-              {/* Header */}
-              <div className="border-b-2 border-violet-600 pb-4 mb-6">
-                <h1 className="text-3xl font-bold text-violet-600">{sprintName}</h1>
-                <div className="text-gray-500 text-sm mt-1">
-                  Generated: {new Date().toLocaleDateString()} • Cost per SP: €{costPerSP}
-                </div>
-              </div>
-
-              {/* Summary Cards */}
-              <div className="grid grid-cols-4 gap-4 mb-8">
-                <div className="bg-violet-600 rounded-xl p-4 text-white text-center">
-                  <div className="text-xs uppercase opacity-75">Total Story Points</div>
-                  <div className="text-3xl font-bold">{grandTotalSP}</div>
-                </div>
-                <div className="bg-violet-600 rounded-xl p-4 text-white text-center">
-                  <div className="text-xs uppercase opacity-75">Total Cost</div>
-                  <div className="text-3xl font-bold">€{grandTotalCost.toLocaleString()}</div>
-                </div>
-                <div className="bg-emerald-600 rounded-xl p-4 text-white text-center">
-                  <div className="text-xs uppercase opacity-75">Billable (Client)</div>
-                  <div className="text-3xl font-bold">€{grandBillableCost.toLocaleString()}</div>
-                  <div className="text-xs opacity-75">{grandBillableSP} SP</div>
-                </div>
-                <div className="bg-gray-600 rounded-xl p-4 text-white text-center">
-                  <div className="text-xs uppercase opacity-75">Internal (Gateway)</div>
-                  <div className="text-3xl font-bold">€{grandInternalCost.toLocaleString()}</div>
-                  <div className="text-xs opacity-75">{grandInternalSP} SP</div>
-                </div>
-              </div>
-
-              {/* Teams Grid */}
-              <h2 className="text-lg font-semibold text-violet-600 mb-4 pb-2 border-b">Team Breakdown</h2>
-              <div className="grid grid-cols-2 gap-6 mb-8">
-                {teamsWithCalcs.map(team => (
-                  <div key={team.id} className="border rounded-xl overflow-hidden">
-                    <div className={`${team.color} px-4 py-2 text-white font-bold flex justify-between`}>
-                      <span>{team.name} Team</span>
-                      <span>{team.totalSP} SP • €{team.totalCost.toLocaleString()}</span>
-                    </div>
-                    <div className="p-4">
-                      {team.features.length === 0 ? (
-                        <div className="text-gray-400 text-sm italic">No features</div>
-                      ) : (
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="text-gray-500 text-xs">
-                              <th className="text-left pb-2">Feature</th>
-                              <th className="text-right pb-2">SP</th>
-                              <th className="text-right pb-2">Cost</th>
-                              <th className="text-center pb-2">Type</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {team.features.map(f => (
-                              <tr key={f.id} className="border-t">
-                                <td className="py-2 pr-2">
-                                  {f.issueKey && <span className="text-indigo-600 font-mono text-xs mr-1">{f.issueKey}</span>}
-                                  {f.name}
-                                </td>
-                                <td className="py-2 text-right font-medium">{f.storyPoints}</td>
-                                <td className="py-2 text-right">€{(f.storyPoints * costPerSP).toLocaleString()}</td>
-                                <td className="py-2 text-center">
-                                  {f.billable 
-                                    ? <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded">Client</span>
-                                    : <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded">Internal</span>
-                                  }
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                          <tfoot>
-                            <tr className="border-t-2 font-semibold">
-                              <td className="pt-2">Subtotal</td>
-                              <td className="pt-2 text-right">{team.totalSP}</td>
-                              <td className="pt-2 text-right">€{team.totalCost.toLocaleString()}</td>
-                              <td></td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      )}
-                      {team.billableSP > 0 && (
-                        <div className="mt-3 pt-3 border-t text-xs text-gray-500 flex justify-between">
-                          <span>Billable: {team.billableSP} SP (€{team.billableCost.toLocaleString()})</span>
-                          <span>Internal: {team.internalSP} SP (€{team.internalCost.toLocaleString()})</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Footer */}
-              <div className="mt-6 pt-4 border-t text-gray-500 text-sm text-center">
-                {sprintName} Report • Generated {new Date().toLocaleDateString()}
-              </div>
-            </div>
-          </div>
-        </div>
-        </>
-      )}
-
-      {/* Save Confirmation Toast */}
-      {showSaveConfirm && (
-        <div className="fixed top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2">
-          <Save className="w-4 h-4" />
-          Draft saved!
-        </div>
-      )}
+      {showSaveConfirm && <div className="fixed top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2"><Save className="w-4 h-4" />Draft saved!</div>}
 
       {/* Sprint Header */}
       <div className={`rounded-xl p-6 shadow-sm border ${cardBg}`}>
@@ -1818,68 +1368,22 @@ function StoryPointsCalculator({ darkMode }) {
           <div className="flex items-center gap-4 flex-wrap">
             <div>
               <label className={`block text-xs mb-1 ${labelText}`}>Sprint</label>
-              <input
-                type="text"
-                value={sprintName}
-                onChange={(e) => setSprintName(e.target.value)}
-                className={`text-xl font-bold border-b border-transparent hover:border-gray-300 focus:border-indigo-500 focus:outline-none bg-transparent ${cardText}`}
-              />
+              <input type="text" value={sprintName} onChange={(e) => setSprintName(e.target.value)} className={`text-xl font-bold border-b border-transparent hover:border-gray-300 focus:border-indigo-500 focus:outline-none bg-transparent ${cardText}`} />
             </div>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm"
-            >
-              <Upload className="w-4 h-4" />
-              Import Jira
-            </button>
-            <button
-              onClick={saveDraft}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-            >
-              <Save className="w-4 h-4" />
-              Save Draft
-            </button>
-            {syncStatus === 'syncing' && (
-              <span className="flex items-center gap-1 text-xs text-blue-500">
-                <Cloud className="w-4 h-4 animate-pulse" />
-                Syncing...
-              </span>
-            )}
-            {syncStatus === 'synced' && (
-              <span className="flex items-center gap-1 text-xs text-green-500">
-                <Cloud className="w-4 h-4" />
-                Synced
-              </span>
-            )}
-            {syncStatus === 'error' && (
-              <span className="flex items-center gap-1 text-xs text-red-500">
-                <CloudOff className="w-4 h-4" />
-                Offline
-              </span>
-            )}
-            {lastSaved && (
-              <span className={`text-xs ${labelText}`}>
-                Last saved: {lastSaved.toLocaleTimeString()}
-              </span>
-            )}
+            <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm"><Upload className="w-4 h-4" />Import Jira</button>
+            <button onClick={saveDraft} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}><Save className="w-4 h-4" />Save Draft</button>
+            {syncStatus === 'syncing' && <span className="flex items-center gap-1 text-xs text-blue-500"><Cloud className="w-4 h-4 animate-pulse" />Syncing...</span>}
+            {syncStatus === 'synced' && <span className="flex items-center gap-1 text-xs text-green-500"><Cloud className="w-4 h-4" />Synced</span>}
+            {syncStatus === 'error' && <span className="flex items-center gap-1 text-xs text-red-500"><CloudOff className="w-4 h-4" />Offline</span>}
+            {lastSaved && <span className={`text-xs ${labelText}`}>Last saved: {lastSaved.toLocaleTimeString()}</span>}
           </div>
           <div className="flex items-center gap-4">
-            <button
-              onClick={clearDraft}
-              className={`text-xs ${labelText} hover:text-red-500`}
-            >
-              Clear all
-            </button>
+            <button onClick={clearDraft} className={`text-xs ${labelText} hover:text-red-500`}>Clear all</button>
             <div className="text-right">
               <label className={`block text-xs mb-1 ${labelText}`}>Cost per SP</label>
               <div className="flex items-center gap-1">
                 <span className={labelText}>€</span>
-                <input
-                  type="number"
-                  value={costPerSP}
-                  onChange={(e) => setCostPerSP(parseFloat(e.target.value) || 0)}
-                  className={`w-20 text-lg font-semibold border-b border-transparent hover:border-gray-300 focus:border-indigo-500 focus:outline-none text-right bg-transparent ${cardText}`}
-                />
+                <input type="number" value={costPerSP} onChange={(e) => setCostPerSP(parseFloat(e.target.value) || 0)} className={`w-20 text-lg font-semibold border-b border-transparent hover:border-gray-300 focus:border-indigo-500 focus:outline-none text-right bg-transparent ${cardText}`} />
               </div>
             </div>
           </div>
@@ -1908,103 +1412,32 @@ function StoryPointsCalculator({ darkMode }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {teamsWithCalcs.map((team) => (
           <div key={team.id} className={`rounded-xl shadow-sm border overflow-hidden ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
-            {/* Team Header */}
             <div className={`${team.color} px-4 py-3 flex justify-between items-center`}>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-white">{team.name} Team</span>
-              </div>
-              <div className="text-white text-sm">
-                <span className="opacity-75">{team.totalSP} SP</span>
-                <span className="mx-2">•</span>
-                <span className="font-bold">€{fmt(team.totalCost)}</span>
-              </div>
+              <span className="font-bold text-white">{team.name} Team</span>
+              <div className="text-white text-sm"><span className="opacity-75">{team.totalSP} SP</span><span className="mx-2">•</span><span className="font-bold">€{fmt(team.totalCost)}</span></div>
             </div>
-
-            {/* Features List */}
             <div className={`p-4 space-y-2 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
-              {team.features.length === 0 && (
-                <div className={`text-center py-4 text-sm ${labelText}`}>No features yet</div>
-              )}
-              
+              {team.features.length === 0 && <div className={`text-center py-4 text-sm ${labelText}`}>No features yet</div>}
               {team.features.map((feature) => (
                 <div key={feature.id} className={`flex items-center gap-2 rounded-lg p-2 ${darkMode ? 'bg-gray-700' : team.colorLight}`}>
-                  <button
-                    onClick={() => updateFeature(team.id, feature.id, 'billable', !feature.billable)}
-                    className={`shrink-0 w-6 h-6 rounded text-xs font-bold flex items-center justify-center ${feature.billable ? 'bg-emerald-500 text-white' : darkMode ? 'bg-gray-600 text-gray-400' : 'bg-gray-200 text-gray-400'}`}
-                    title={feature.billable ? 'Billable (click to change)' : 'Internal (click to change)'}
-                  >
-                    {feature.billable ? '€' : '—'}
-                  </button>
-                  {feature.issueKey && (
-                    <span className={`shrink-0 text-xs font-mono px-1.5 py-0.5 rounded ${darkMode ? 'bg-gray-600 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
-                      {feature.issueKey}
-                    </span>
-                  )}
-                  <input
-                    type="text"
-                    value={feature.name}
-                    onChange={(e) => updateFeature(team.id, feature.id, 'name', e.target.value)}
-                    className={`flex-1 min-w-0 px-2 py-1 text-sm border rounded ${inputBg}`}
-                  />
-                  <input
-                    type="number"
-                    value={feature.storyPoints}
-                    onChange={(e) => updateFeature(team.id, feature.id, 'storyPoints', e.target.value)}
-                    className={`shrink-0 w-14 px-2 py-1 text-sm border rounded text-center ${inputBg}`}
-                  />
+                  <button onClick={() => updateFeature(team.id, feature.id, 'billable', !feature.billable)} className={`shrink-0 w-6 h-6 rounded text-xs font-bold flex items-center justify-center ${feature.billable ? 'bg-emerald-500 text-white' : darkMode ? 'bg-gray-600 text-gray-400' : 'bg-gray-200 text-gray-400'}`}>{feature.billable ? '€' : '—'}</button>
+                  {feature.issueKey && <span className={`shrink-0 text-xs font-mono px-1.5 py-0.5 rounded ${darkMode ? 'bg-gray-600 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>{feature.issueKey}</span>}
+                  <input type="text" value={feature.name} onChange={(e) => updateFeature(team.id, feature.id, 'name', e.target.value)} className={`flex-1 min-w-0 px-2 py-1 text-sm border rounded ${inputBg}`} />
+                  <input type="number" value={feature.storyPoints} onChange={(e) => updateFeature(team.id, feature.id, 'storyPoints', e.target.value)} className={`shrink-0 w-14 px-2 py-1 text-sm border rounded text-center ${inputBg}`} />
                   <span className={`shrink-0 w-14 text-xs text-right ${labelText}`}>€{fmt(feature.storyPoints * costPerSP)}</span>
-                  <button 
-                    onClick={() => deleteFeature(team.id, feature.id)} 
-                    className="shrink-0 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-red-500"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <button onClick={() => deleteFeature(team.id, feature.id)} className="shrink-0 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                 </div>
               ))}
-
-              {/* Add new feature */}
               <div className={`flex items-center gap-2 border-t border-dashed pt-2 mt-2 ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
-                <input
-                  type="text"
-                  placeholder="Feature..."
-                  value={newFeatures[team.id].name}
-                  onChange={(e) => setNewFeatures({
-                    ...newFeatures, 
-                    [team.id]: { ...newFeatures[team.id], name: e.target.value }
-                  })}
-                  className={`flex-1 px-2 py-1 text-sm border rounded ${inputBg}`}
-                />
-                <input
-                  type="number"
-                  placeholder="SP"
-                  value={newFeatures[team.id].storyPoints}
-                  onChange={(e) => setNewFeatures({
-                    ...newFeatures, 
-                    [team.id]: { ...newFeatures[team.id], storyPoints: e.target.value }
-                  })}
-                  className={`w-16 px-2 py-1 text-sm border rounded text-center ${inputBg}`}
-                />
-                <button 
-                  onClick={() => addFeature(team.id)} 
-                  className={`p-1 ${team.color} text-white rounded hover:opacity-80`}
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
+                <input type="text" placeholder="Feature..." value={newFeatures[team.id].name} onChange={(e) => setNewFeatures({ ...newFeatures, [team.id]: { ...newFeatures[team.id], name: e.target.value } })} className={`flex-1 px-2 py-1 text-sm border rounded ${inputBg}`} />
+                <input type="number" placeholder="SP" value={newFeatures[team.id].storyPoints} onChange={(e) => setNewFeatures({ ...newFeatures, [team.id]: { ...newFeatures[team.id], storyPoints: e.target.value } })} className={`w-16 px-2 py-1 text-sm border rounded text-center ${inputBg}`} />
+                <button onClick={() => addFeature(team.id)} className={`p-1 ${team.color} text-white rounded hover:opacity-80`}><Plus className="w-4 h-4" /></button>
               </div>
             </div>
-
-            {/* Team Footer */}
             {team.features.length > 0 && (
               <div className={`px-4 py-2 border-t flex justify-between items-center ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'}`}>
-                <button 
-                  onClick={() => clearTeam(team.id)}
-                  className="text-xs text-gray-400 hover:text-red-500"
-                >
-                  Clear all
-                </button>
-                <div className={`text-sm font-semibold ${team.colorText}`}>
-                  {team.totalSP} SP = €{fmt(team.totalCost)}
-                </div>
+                <button onClick={() => clearTeam(team.id)} className="text-xs text-gray-400 hover:text-red-500">Clear all</button>
+                <div className={`text-sm font-semibold ${team.colorText}`}>{team.totalSP} SP = €{fmt(team.totalCost)}</div>
               </div>
             )}
           </div>
@@ -2014,29 +1447,20 @@ function StoryPointsCalculator({ darkMode }) {
       {/* Sprint Summary */}
       <div className="bg-violet-600 rounded-xl p-6 text-white">
         <h2 className="text-sm font-semibold uppercase tracking-wide opacity-75 mb-4">{sprintName} Summary</h2>
-        
         <div className="grid grid-cols-4 gap-4 mb-4">
           {teamsWithCalcs.map((team) => (
             <div key={team.id} className="bg-white/10 rounded-lg p-3 text-center">
               <div className="text-xs opacity-75">{team.name}</div>
               <div className="text-lg font-bold">{team.totalSP} SP</div>
               <div className="text-sm opacity-75">€{fmt(team.totalCost)}</div>
-              {team.billableSP > 0 && (
-                <div className="text-xs text-emerald-300 mt-1">€{fmt(team.billableCost)} billable</div>
-              )}
+              {team.billableSP > 0 && <div className="text-xs text-emerald-300 mt-1">€{fmt(team.billableCost)} billable</div>}
             </div>
           ))}
         </div>
-
         <div className="flex justify-between items-center pt-4 border-t border-white/20">
-          <div>
-            <span className="font-bold text-lg">Sprint Total</span>
-            <span className="ml-2 opacity-75">({grandTotalSP} SP)</span>
-          </div>
+          <div><span className="font-bold text-lg">Sprint Total</span><span className="ml-2 opacity-75">({grandTotalSP} SP)</span></div>
           <span className="text-3xl font-bold">€{fmt(grandTotalCost)}</span>
         </div>
-
-        {/* Billable Breakdown */}
         <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-white/20">
           <div className="bg-emerald-500/30 rounded-lg p-3">
             <div className="text-xs opacity-75">Billable (Client Work)</div>
@@ -2055,31 +1479,10 @@ function StoryPointsCalculator({ darkMode }) {
       <div className={`rounded-xl p-4 shadow-sm border ${cardBg}`}>
         <div className="flex flex-wrap gap-3 justify-between items-center">
           <div className="flex gap-2">
-            <button
-              onClick={saveSprint}
-              disabled={grandTotalSP === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save className="w-4 h-4" />
-              Save Sprint & Start New
-            </button>
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-            >
-              <History className="w-4 h-4" />
-              History ({sprintHistory.length})
-            </button>
+            <button onClick={saveSprint} disabled={grandTotalSP === 0} className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50"><Save className="w-4 h-4" />Save Sprint & Start New</button>
+            <button onClick={() => setShowHistory(!showHistory)} className={`flex items-center gap-2 px-4 py-2 rounded-lg ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}><History className="w-4 h-4" />History ({sprintHistory.length})</button>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowSprintPreview(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-            >
-              <FileText className="w-4 h-4" />
-              Preview Report
-            </button>
-          </div>
+          <button onClick={() => setShowSprintPreview(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"><FileText className="w-4 h-4" />Preview Report</button>
         </div>
       </div>
 
@@ -2089,11 +1492,8 @@ function StoryPointsCalculator({ darkMode }) {
           <div className={`px-6 py-4 border-b ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'}`}>
             <h2 className={`text-sm font-semibold uppercase tracking-wide ${labelText}`}>Sprint History</h2>
           </div>
-          
           {sprintHistory.length === 0 ? (
-            <div className={`p-8 text-center ${labelText} ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
-              No saved sprints yet. Complete a sprint and click "Save Sprint" to add it here.
-            </div>
+            <div className={`p-8 text-center ${labelText} ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>No saved sprints yet.</div>
           ) : (
             <div className={`divide-y ${darkMode ? 'divide-gray-700 bg-gray-800' : 'divide-gray-200 bg-white'}`}>
               {sprintHistory.map((sprint) => (
@@ -2108,53 +1508,11 @@ function StoryPointsCalculator({ darkMode }) {
                         <div className="text-lg font-bold text-violet-500">€{fmt(sprint.grandTotalCost)}</div>
                         <div className={`text-sm ${labelText}`}>{sprint.grandTotalSP} SP</div>
                       </div>
-                      <button
-                        onClick={() => deleteSprint(sprint.id)}
-                        className="p-2 text-gray-400 hover:text-red-500"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <button onClick={() => deleteSprint(sprint.id)} className="p-2 text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                     </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-4 gap-2">
-                    {sprint.teams.map((team) => (
-                      <div key={team.id} className={`rounded-lg p-2 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                        <div className="flex justify-between items-center mb-1">
-                          <span className={`text-xs font-medium ${labelText}`}>{team.name}</span>
-                          <span className={`text-xs ${labelText}`}>{team.totalSP} SP</span>
-                        </div>
-                        <div className={`text-sm font-semibold ${cardText}`}>€{fmt(team.totalCost)}</div>
-                        {team.features.length > 0 && (
-                          <div className={`mt-1 text-xs ${labelText}`}>
-                            {team.features.slice(0, 2).map(f => f.name).join(', ')}
-                            {team.features.length > 2 && ` +${team.features.length - 2} more`}
-                          </div>
-                        )}
-                      </div>
-                    ))}
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-
-          {/* History Summary */}
-          {sprintHistory.length > 0 && (
-            <div className={`px-6 py-4 border-t ${darkMode ? 'bg-violet-900/30 border-gray-700' : 'bg-violet-50 border-gray-200'}`}>
-              <div className="flex justify-between items-center">
-                <span className={`font-medium ${darkMode ? 'text-violet-300' : 'text-violet-800'}`}>
-                  Total across {sprintHistory.length} sprint{sprintHistory.length > 1 ? 's' : ''}
-                </span>
-                <div className="text-right">
-                  <span className="text-lg font-bold text-violet-500">
-                    €{fmt(sprintHistory.reduce((sum, s) => sum + s.grandTotalCost, 0))}
-                  </span>
-                  <span className={`text-sm ml-2 ${darkMode ? 'text-violet-400' : 'text-violet-400'}`}>
-                    ({sprintHistory.reduce((sum, s) => sum + s.grandTotalSP, 0)} SP)
-                  </span>
-                </div>
-              </div>
             </div>
           )}
         </div>
@@ -2184,7 +1542,7 @@ function StoryPointsCalculator({ darkMode }) {
   );
 }
 
-// Commercial Offer Calculator for Client Quotes
+// Commercial Offer Calculator
 function CommercialOfferCalculator({ darkMode }) {
   const [projectName, setProjectName] = useState('Client Feature Request');
   const [clientName, setClientName] = useState('');
@@ -2203,13 +1561,6 @@ function CommercialOfferCalculator({ darkMode }) {
     { id: 5, name: 'Project Manager', hourlyRate: 60, hours: 12 },
   ]);
 
-  const [tasks, setTasks] = useState([
-    { id: 1, name: 'Requirements & Planning', description: 'Gathering requirements, technical planning' },
-    { id: 2, name: 'Development', description: 'Core implementation' },
-    { id: 3, name: 'Testing & QA', description: 'Testing, bug fixes' },
-    { id: 4, name: 'Deployment', description: 'Production deployment, documentation' },
-  ]);
-
   const [newMember, setNewMember] = useState({ name: '', hourlyRate: 50, hours: 0 });
 
   const totalHours = teamMembers.reduce((sum, m) => sum + m.hours, 0);
@@ -2217,48 +1568,16 @@ function CommercialOfferCalculator({ darkMode }) {
   const marginAmount = totalCost * (margin / 100);
   const finalPrice = totalCost + marginAmount;
 
-  const updateMember = (id, field, value) => {
-    setTeamMembers(teamMembers.map(m => 
-      m.id === id ? { ...m, [field]: field === 'name' ? value : parseFloat(value) || 0 } : m
-    ));
-  };
-
-  const deleteMember = (id) => {
-    setTeamMembers(teamMembers.filter(m => m.id !== id));
-  };
-
+  const updateMember = (id, field, value) => setTeamMembers(teamMembers.map(m => m.id === id ? { ...m, [field]: field === 'name' ? value : parseFloat(value) || 0 } : m));
+  const deleteMember = (id) => setTeamMembers(teamMembers.filter(m => m.id !== id));
   const addMember = () => {
     if (newMember.name) {
       setTeamMembers([...teamMembers, { ...newMember, id: Date.now() }]);
-      setNewMember({ name: '', role: 'Middle', hourlyRate: 50, hours: 0 });
+      setNewMember({ name: '', hourlyRate: 50, hours: 0 });
     }
   };
 
   const fmt = (val, dec = 0) => new Intl.NumberFormat('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(val);
-
-  const exportQuote = () => {
-    let csv = 'Commercial Offer\n\n';
-    csv += `Project,${projectName}\n`;
-    csv += `Client,${clientName}\n`;
-    csv += `Date,${new Date().toLocaleDateString()}\n\n`;
-    csv += 'Team Member,Hourly Rate (€),Hours,Cost (€)\n';
-    
-    teamMembers.forEach(m => {
-      csv += `"${m.name}",${m.hourlyRate},${m.hours},${m.hours * m.hourlyRate}\n`;
-    });
-    
-    csv += `\nSubtotal,,${totalHours},€${fmt(totalCost)}\n`;
-    csv += `Margin (${margin}%),,,"€${fmt(marginAmount)}"\n`;
-    csv += `Total,,,"€${fmt(finalPrice)}"\n`;
-
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `quote-${clientName || 'client'}-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
   return (
     <div className="space-y-6">
@@ -2267,23 +1586,11 @@ function CommercialOfferCalculator({ darkMode }) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="md:col-span-2">
             <label className={`block text-xs mb-1 ${labelText}`}>Project / Feature Name</label>
-            <input
-              type="text"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              className={`w-full text-xl font-bold border-b border-transparent hover:border-gray-300 focus:border-indigo-500 focus:outline-none bg-transparent ${cardText}`}
-              placeholder="Feature name..."
-            />
+            <input type="text" value={projectName} onChange={(e) => setProjectName(e.target.value)} className={`w-full text-xl font-bold border-b border-transparent hover:border-gray-300 focus:border-indigo-500 focus:outline-none bg-transparent ${cardText}`} placeholder="Feature name..." />
           </div>
           <div>
             <label className={`block text-xs mb-1 ${labelText}`}>Client Name</label>
-            <input
-              type="text"
-              value={clientName}
-              onChange={(e) => setClientName(e.target.value)}
-              className={`w-full px-3 py-2 border rounded-lg ${inputBg}`}
-              placeholder="Client name..."
-            />
+            <input type="text" value={clientName} onChange={(e) => setClientName(e.target.value)} className={`w-full px-3 py-2 border rounded-lg ${inputBg}`} placeholder="Client name..." />
           </div>
         </div>
       </div>
@@ -2295,7 +1602,6 @@ function CommercialOfferCalculator({ darkMode }) {
         </div>
         
         <div className="p-4 space-y-3">
-          {/* Header */}
           <div className={`grid grid-cols-12 gap-2 text-xs font-medium px-2 ${labelText}`}>
             <div className="col-span-5">Team Member</div>
             <div className="col-span-2 text-right">Rate/hr</div>
@@ -2303,86 +1609,42 @@ function CommercialOfferCalculator({ darkMode }) {
             <div className="col-span-3 text-right">Cost</div>
           </div>
 
-          {/* Members */}
           {teamMembers.map((member) => (
             <div key={member.id} className={`grid grid-cols-12 gap-2 items-center rounded-lg p-2 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
               <div className="col-span-5">
-                <input
-                  type="text"
-                  value={member.name}
-                  onChange={(e) => updateMember(member.id, 'name', e.target.value)}
-                  className={`w-full px-2 py-1 text-sm border rounded ${inputBg}`}
-                />
+                <input type="text" value={member.name} onChange={(e) => updateMember(member.id, 'name', e.target.value)} className={`w-full px-2 py-1 text-sm border rounded ${inputBg}`} />
               </div>
               <div className="col-span-2">
                 <div className="flex items-center justify-end gap-1">
                   <span className={`text-xs ${labelText}`}>€</span>
-                  <input
-                    type="number"
-                    value={member.hourlyRate}
-                    onChange={(e) => updateMember(member.id, 'hourlyRate', e.target.value)}
-                    className={`w-16 px-2 py-1 text-sm border rounded text-right ${inputBg}`}
-                  />
+                  <input type="number" value={member.hourlyRate} onChange={(e) => updateMember(member.id, 'hourlyRate', e.target.value)} className={`w-16 px-2 py-1 text-sm border rounded text-right ${inputBg}`} />
                 </div>
               </div>
               <div className="col-span-2">
-                <input
-                  type="number"
-                  value={member.hours}
-                  onChange={(e) => updateMember(member.id, 'hours', e.target.value)}
-                  className={`w-full px-2 py-1 text-sm border rounded text-right ${inputBg}`}
-                />
+                <input type="number" value={member.hours} onChange={(e) => updateMember(member.id, 'hours', e.target.value)} className={`w-full px-2 py-1 text-sm border rounded text-right ${inputBg}`} />
               </div>
               <div className="col-span-3 flex items-center justify-end gap-2">
                 <span className={`text-sm font-medium ${cardText}`}>€{fmt(member.hours * member.hourlyRate)}</span>
-                <button 
-                  onClick={() => deleteMember(member.id)}
-                  className="p-1 text-gray-400 hover:text-red-500"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <button onClick={() => deleteMember(member.id)} className="p-1 text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
               </div>
             </div>
           ))}
 
-          {/* Add new member */}
           <div className={`grid grid-cols-12 gap-2 items-center border-t border-dashed pt-3 ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
             <div className="col-span-5">
-              <input
-                type="text"
-                value={newMember.name}
-                onChange={(e) => setNewMember({ ...newMember, name: e.target.value })}
-                placeholder="Add team member..."
-                className={`w-full px-2 py-1 text-sm border rounded ${inputBg}`}
-              />
+              <input type="text" value={newMember.name} onChange={(e) => setNewMember({ ...newMember, name: e.target.value })} placeholder="Add team member..." className={`w-full px-2 py-1 text-sm border rounded ${inputBg}`} />
             </div>
             <div className="col-span-2">
               <div className="flex items-center justify-end gap-1">
                 <span className={`text-xs ${labelText}`}>€</span>
-                <input
-                  type="number"
-                  value={newMember.hourlyRate}
-                  onChange={(e) => setNewMember({ ...newMember, hourlyRate: parseFloat(e.target.value) || 0 })}
-                  className={`w-16 px-2 py-1 text-sm border rounded text-right ${inputBg}`}
-                />
+                <input type="number" value={newMember.hourlyRate} onChange={(e) => setNewMember({ ...newMember, hourlyRate: parseFloat(e.target.value) || 0 })} className={`w-16 px-2 py-1 text-sm border rounded text-right ${inputBg}`} />
               </div>
             </div>
             <div className="col-span-2">
-              <input
-                type="number"
-                value={newMember.hours || ''}
-                onChange={(e) => setNewMember({ ...newMember, hours: parseFloat(e.target.value) || 0 })}
-                placeholder="Hrs"
-                className={`w-full px-2 py-1 text-sm border rounded text-right ${inputBg}`}
-              />
+              <input type="number" value={newMember.hours || ''} onChange={(e) => setNewMember({ ...newMember, hours: parseFloat(e.target.value) || 0 })} placeholder="Hrs" className={`w-full px-2 py-1 text-sm border rounded text-right ${inputBg}`} />
             </div>
             <div className="col-span-3 flex justify-end">
-              <button
-                onClick={addMember}
-                className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-sm"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
+              <button onClick={addMember} className="px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-sm"><Plus className="w-4 h-4" /></button>
             </div>
           </div>
         </div>
@@ -2404,12 +1666,7 @@ function CommercialOfferCalculator({ darkMode }) {
           <div className="bg-white/10 rounded-lg p-3 text-center">
             <div className="text-xs opacity-75">Margin</div>
             <div className="flex items-center justify-center gap-2">
-              <input
-                type="number"
-                value={margin}
-                onChange={(e) => setMargin(parseFloat(e.target.value) || 0)}
-                className="w-14 px-2 py-1 text-lg font-bold text-center bg-white/20 border border-white/30 rounded text-white"
-              />
+              <input type="number" value={margin} onChange={(e) => setMargin(parseFloat(e.target.value) || 0)} className="w-14 px-2 py-1 text-lg font-bold text-center bg-white/20 border border-white/30 rounded text-white" />
               <span className="text-lg font-bold">%</span>
             </div>
             <div className="text-xs opacity-75 mt-1">€{fmt(marginAmount)}</div>
@@ -2420,7 +1677,6 @@ function CommercialOfferCalculator({ darkMode }) {
           </div>
         </div>
 
-        {/* Per-hour breakdown */}
         <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/20">
           <div className="text-center">
             <div className="text-xs opacity-75">Avg Internal Rate</div>
@@ -2432,743 +1688,36 @@ function CommercialOfferCalculator({ darkMode }) {
           </div>
         </div>
       </div>
-
-      {/* Actions */}
-      <div className={`rounded-xl p-4 shadow-sm border ${cardBg}`}>
-        <div className="flex flex-wrap gap-3 justify-between items-center">
-          <div className={`text-sm ${labelText}`}>
-            {clientName && <span>Quote for <strong className={cardText}>{clientName}</strong> • </span>}
-            {teamMembers.length} team members • {fmt(totalHours)} hours
-          </div>
-          <button
-            onClick={exportQuote}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
-          >
-            <Download className="w-4 h-4" />
-            Export Quote (CSV)
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
 
-// Client Proposal Calculator - Multi-feature proposals with deliverables
+// Client Proposal Calculator
 function ClientProposalCalculator({ darkMode }) {
-  const [clientName, setClientName] = useState('');
-  const [validUntil, setValidUntil] = useState(() => {
-    const date = new Date();
-    date.setDate(date.getDate() + 30);
-    return date.toISOString().split('T')[0];
-  });
-  const [margin, setMargin] = useState(20);
-  const [notes, setNotes] = useState('');
-  const [showPreview, setShowPreview] = useState(false);
-  const [syncStatus, setSyncStatus] = useState('idle');
-  const [proposalId, setProposalId] = useState(null);
-  const [lastSaved, setLastSaved] = useState(null);
-  
   const cardBg = darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200';
   const cardText = darkMode ? 'text-white' : 'text-gray-800';
   const labelText = darkMode ? 'text-gray-400' : 'text-gray-500';
-  const inputBg = darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-200';
-
-  const [features, setFeatures] = useState([
-    {
-      id: 1,
-      name: 'API Integration',
-      description: 'Integrate with client payment system',
-      deliverables: [
-        'REST API endpoints for payment processing',
-        'Webhook notifications for status updates',
-        'API documentation and examples',
-      ],
-      team: [
-        { id: 1, name: 'Backend Developer', rate: 75, hours: 40 },
-        { id: 2, name: 'QA Engineer', rate: 45, hours: 8 },
-      ],
-      expanded: true
-    },
-  ]);
-
-  const [expandedFeature, setExpandedFeature] = useState(1);
-
-  // Load from Supabase on mount
-  useEffect(() => {
-    const loadFromSupabase = async () => {
-      try {
-        setSyncStatus('syncing');
-        const { data, error } = await supabase
-          .from('proposals')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(1);
-        
-        if (error) throw error;
-        
-        if (data && data.length > 0) {
-          const proposal = data[0];
-          setProposalId(proposal.id);
-          if (proposal.client_name) setClientName(proposal.client_name);
-          if (proposal.valid_until) setValidUntil(proposal.valid_until);
-          if (proposal.margin) setMargin(proposal.margin);
-          if (proposal.features) setFeatures(proposal.features);
-          if (proposal.notes) setNotes(proposal.notes);
-          setLastSaved(new Date(proposal.created_at));
-        }
-        setSyncStatus('synced');
-      } catch (e) {
-        console.error('Failed to load from Supabase:', e);
-        setSyncStatus('error');
-      }
-    };
-    loadFromSupabase();
-  }, []);
-
-  // Save to Supabase
-  const saveProposal = async () => {
-    try {
-      setSyncStatus('syncing');
-      const proposalData = {
-        client_name: clientName,
-        valid_until: validUntil,
-        margin: margin,
-        features: features,
-        notes: notes,
-      };
-      
-      let result;
-      if (proposalId) {
-        result = await supabase
-          .from('proposals')
-          .update(proposalData)
-          .eq('id', proposalId)
-          .select();
-      } else {
-        result = await supabase
-          .from('proposals')
-          .insert(proposalData)
-          .select();
-      }
-      
-      if (result.error) throw result.error;
-      
-      if (result.data && result.data[0]) {
-        setProposalId(result.data[0].id);
-      }
-      
-      setLastSaved(new Date());
-      setSyncStatus('synced');
-    } catch (e) {
-      console.error('Failed to save to Supabase:', e);
-      setSyncStatus('error');
-    }
-  };
-
-  // Auto-save on changes (debounced)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (clientName || features.length > 0) {
-        saveProposal();
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [clientName, validUntil, margin, features, notes]);
-
-  const calculateFeatureCost = (feature) => {
-    return feature.team.reduce((sum, m) => sum + (m.hours * m.rate), 0);
-  };
-
-  const calculateFeatureHours = (feature) => {
-    return feature.team.reduce((sum, m) => sum + m.hours, 0);
-  };
-
-  const totalBaseCost = features.reduce((sum, f) => sum + calculateFeatureCost(f), 0);
-  const totalHours = features.reduce((sum, f) => sum + calculateFeatureHours(f), 0);
-  const marginAmount = totalBaseCost * (margin / 100);
-  const totalPrice = totalBaseCost + marginAmount;
-
-  const fmt = (val, dec = 0) => new Intl.NumberFormat('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(val);
-
-  const copyToClipboard = () => {
-    const text = features.map((f, i) => {
-      const deliverables = f.deliverables.filter(d => d.trim()).map(d => '  ✓ ' + d).join('\n');
-      const team = f.team.filter(m => m.name && m.hours > 0).map(m => 
-        '  - ' + m.name + ': ' + m.hours + 'h = €' + fmt(m.hours * m.rate * (1 + margin/100))
-      ).join('\n');
-      return '--- Feature #' + (i+1) + ': ' + f.name + ' ---\n' +
-        (f.description ? f.description + '\n' : '') +
-        '\nDeliverables:\n' + deliverables +
-        '\n\nTeam:\n' + team +
-        '\nSubtotal: €' + fmt(calculateFeatureCost(f) * (1 + margin/100));
-    }).join('\n\n');
-    
-    const summary = '\n\n=== SUMMARY ===\n' +
-      'Features: ' + features.length + '\n' +
-      'Total Hours: ' + fmt(totalHours) + '\n' +
-      'Total: €' + fmt(totalPrice);
-    
-    navigator.clipboard.writeText('PROPOSAL' + (clientName ? ' for ' + clientName : '') + '\n\n' + text + summary);
-    alert('Copied to clipboard!');
-  };
-
-  const addFeature = () => {
-    const newId = Date.now();
-    setFeatures([...features, {
-      id: newId,
-      name: 'New Feature',
-      description: '',
-      deliverables: [''],
-      team: [{ id: 1, name: 'Developer', rate: 60, hours: 0 }],
-      expanded: true
-    }]);
-    setExpandedFeature(newId);
-  };
-
-  const deleteFeature = (featureId) => {
-    if (features.length > 1) {
-      setFeatures(features.filter(f => f.id !== featureId));
-    }
-  };
-
-  const updateFeature = (featureId, field, value) => {
-    setFeatures(features.map(f => 
-      f.id === featureId ? { ...f, [field]: value } : f
-    ));
-  };
-
-  const addDeliverable = (featureId) => {
-    setFeatures(features.map(f => 
-      f.id === featureId ? { ...f, deliverables: [...f.deliverables, ''] } : f
-    ));
-  };
-
-  const updateDeliverable = (featureId, index, value) => {
-    setFeatures(features.map(f => {
-      if (f.id !== featureId) return f;
-      const newDeliverables = [...f.deliverables];
-      newDeliverables[index] = value;
-      return { ...f, deliverables: newDeliverables };
-    }));
-  };
-
-  const deleteDeliverable = (featureId, index) => {
-    setFeatures(features.map(f => {
-      if (f.id !== featureId) return f;
-      return { ...f, deliverables: f.deliverables.filter((_, i) => i !== index) };
-    }));
-  };
-
-  const addTeamMember = (featureId) => {
-    setFeatures(features.map(f => {
-      if (f.id !== featureId) return f;
-      return { ...f, team: [...f.team, { id: Date.now(), name: '', rate: 60, hours: 0 }] };
-    }));
-  };
-
-  const updateTeamMember = (featureId, memberId, field, value) => {
-    setFeatures(features.map(f => {
-      if (f.id !== featureId) return f;
-      return {
-        ...f,
-        team: f.team.map(m => 
-          m.id === memberId ? { ...m, [field]: field === 'name' ? value : parseFloat(value) || 0 } : m
-        )
-      };
-    }));
-  };
-
-  const deleteTeamMember = (featureId, memberId) => {
-    setFeatures(features.map(f => {
-      if (f.id !== featureId) return f;
-      return { ...f, team: f.team.filter(m => m.id !== memberId) };
-    }));
-  };
 
   return (
-    <div className="space-y-6">
-      {/* Preview Modal */}
-      {showPreview && (
-        <>
-          <style>{`
-            @media print {
-              body * { visibility: hidden !important; }
-              #proposal-modal, #proposal-modal * { visibility: visible !important; }
-              #proposal-modal { 
-                position: absolute !important; 
-                left: 0 !important; 
-                top: 0 !important; 
-                width: 100% !important;
-                padding: 20px !important;
-                background: white !important;
-              }
-              .print-hide { display: none !important; }
-              * {
-                -webkit-print-color-adjust: exact !important;
-                print-color-adjust: exact !important;
-                color-adjust: exact !important;
-              }
-              .bg-gradient-to-r { background: linear-gradient(to right, #4f46e5, #7c3aed) !important; }
-              .from-indigo-600 { --tw-gradient-from: #4f46e5 !important; }
-              .to-violet-600 { --tw-gradient-to: #7c3aed !important; }
-              .bg-gray-50 { background-color: #f9fafb !important; }
-              .bg-emerald-100 { background-color: #d1fae5 !important; }
-              .bg-gray-100 { background-color: #f3f4f6 !important; }
-              .bg-gray-200 { background-color: #e5e7eb !important; }
-              .bg-amber-50 { background-color: #fffbeb !important; }
-              .text-emerald-500 { color: #10b981 !important; }
-              .text-emerald-600 { color: #059669 !important; }
-              .text-emerald-700 { color: #047857 !important; }
-              .text-indigo-600 { color: #4f46e5 !important; }
-              .text-amber-800 { color: #92400e !important; }
-              .text-amber-900 { color: #78350f !important; }
-              .border-indigo-600 { border-color: #4f46e5 !important; }
-              .border-amber-300 { border-color: #fcd34d !important; }
-            }
-          `}</style>
-          <div id="proposal-modal" className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 print:p-0 print:bg-white print:block">
-            <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-auto print:max-h-none print:shadow-none print:rounded-none print:max-w-none print:overflow-visible">
-              {/* Modal Header */}
-              <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center print-hide">
-                <h2 className="font-bold text-lg text-gray-800">Proposal Preview</h2>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => window.print()}
-                    className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700"
-                  >
-                    Print / PDF
-                  </button>
-                  <button
-                    onClick={copyToClipboard}
-                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700"
-                  >
-                    Copy Text
-                  </button>
-                  <button
-                    onClick={() => setShowPreview(false)}
-                    className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
-              
-              {/* Modal Content */}
-              <div className="p-6 print:p-8">
-                <div className="border-b-2 border-indigo-600 pb-4 mb-6">
-                  <h1 className="text-2xl font-bold text-indigo-600">
-                    {clientName ? 'Proposal for ' + clientName : 'Proposal'}
-                  </h1>
-                  <div className="text-gray-500 text-sm mt-1">
-                    <div><strong>Date:</strong> {new Date().toLocaleDateString()}</div>
-                    <div><strong>Valid Until:</strong> {new Date(validUntil).toLocaleDateString()}</div>
-                  </div>
-              </div>
-
-              <h2 className="text-lg font-semibold text-indigo-600 mb-4 pb-2 border-b">Scope of Work</h2>
-              
-              {features.map((f, i) => (
-                <div key={f.id} className="bg-gray-50 rounded-lg p-4 mb-4 border">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <div className="font-semibold text-gray-800">{f.name}</div>
-                      {f.description && <div className="text-gray-500 text-sm">{f.description}</div>}
-                    </div>
-                    <div className="text-lg font-bold text-emerald-600">
-                      €{fmt(calculateFeatureCost(f) * (1 + margin/100))}
-                    </div>
-                  </div>
-                  
-                  {f.deliverables.filter(d => d.trim()).length > 0 && (
-                    <div className="mb-3">
-                      <div className="text-xs font-semibold text-gray-600 mb-2">Deliverables & Acceptance Criteria</div>
-                      {f.deliverables.filter(d => d.trim()).map((d, di) => (
-                        <div key={di} className="flex gap-2 text-sm mb-1">
-                          <span className="text-emerald-500 font-bold">✓</span>
-                          <span>{d}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-gray-200">
-                        <th className="text-left p-2 font-semibold">Resource</th>
-                        <th className="text-right p-2 font-semibold">Hours</th>
-                        <th className="text-right p-2 font-semibold">Cost</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {f.team.filter(m => m.name && m.hours > 0).map(m => (
-                        <tr key={m.id} className="border-b">
-                          <td className="p-2">{m.name}</td>
-                          <td className="p-2 text-right">{m.hours}h</td>
-                          <td className="p-2 text-right">€{fmt(m.hours * m.rate * (1 + margin/100))}</td>
-                        </tr>
-                      ))}
-                      <tr className="font-semibold bg-gray-100">
-                        <td className="p-2">Subtotal</td>
-                        <td className="p-2 text-right">{calculateFeatureHours(f)}h</td>
-                        <td className="p-2 text-right">€{fmt(calculateFeatureCost(f) * (1 + margin/100))}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              ))}
-
-              {/* Summary */}
-              <div className="bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl p-6 text-white mt-6">
-                <div className="text-sm uppercase tracking-wide opacity-75 mb-4">Investment Summary</div>
-                <div className="grid grid-cols-4 gap-4 mb-4">
-                  <div className="text-center">
-                    <div className="text-xs opacity-75">Features</div>
-                    <div className="text-2xl font-bold">{features.length}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs opacity-75">Total Hours</div>
-                    <div className="text-2xl font-bold">{fmt(totalHours)}</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs opacity-75">Timeline</div>
-                    <div className="text-2xl font-bold">{Math.ceil(totalHours / 40)}w</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs opacity-75">Avg Rate</div>
-                    <div className="text-2xl font-bold">€{totalHours > 0 ? fmt(totalPrice / totalHours) : 0}/h</div>
-                  </div>
-                </div>
-                <div className="flex justify-between items-center pt-4 border-t border-white/20">
-                  <div className="text-lg">Total Investment</div>
-                  <div className="text-3xl font-bold">€{fmt(totalPrice)}</div>
-                </div>
-              </div>
-
-              {notes && (
-                <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 mt-4">
-                  <div className="font-semibold text-amber-800 mb-1">Additional Notes</div>
-                  <div className="text-amber-900 text-sm whitespace-pre-wrap">{notes}</div>
-                </div>
-              )}
-
-              <div className="mt-6 pt-4 border-t text-gray-500 text-sm">
-                This proposal is valid until {new Date(validUntil).toLocaleDateString()}. Prices are in EUR and exclude applicable taxes.
-              </div>
-            </div>
-          </div>
-        </div>
-        </>
-      )}
-
-      {/* Project Header */}
-      <div className={`rounded-xl p-6 shadow-sm border ${cardBg}`}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className={`block text-xs mb-1 ${labelText}`}>Client</label>
-            <input
-              type="text"
-              value={clientName}
-              onChange={(e) => setClientName(e.target.value)}
-              className={`w-full px-3 py-2 border rounded-lg ${inputBg}`}
-              placeholder="Client name..."
-            />
-          </div>
-          <div>
-            <label className={`block text-xs mb-1 ${labelText}`}>Valid Until</label>
-            <input
-              type="date"
-              value={validUntil}
-              onChange={(e) => setValidUntil(e.target.value)}
-              className={`w-full px-3 py-2 border rounded-lg ${inputBg}`}
-            />
-          </div>
-        </div>
+    <div className={`rounded-xl p-8 shadow-sm border text-center ${cardBg}`}>
+      <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${darkMode ? 'bg-indigo-900/50' : 'bg-indigo-100'}`}>
+        <FileText className={`w-8 h-8 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
       </div>
-
-      {/* Features */}
-      {features.map((feature, fIndex) => (
-        <div key={feature.id} className={`rounded-xl shadow-sm border overflow-hidden ${cardBg}`}>
-          {/* Feature Header */}
-          <div 
-            className={`px-4 py-3 flex justify-between items-center cursor-pointer ${
-              fIndex % 2 === 0 ? 'bg-indigo-600' : 'bg-violet-600'
-            }`}
-            onClick={() => setExpandedFeature(expandedFeature === feature.id ? null : feature.id)}
-          >
-            <div className="flex items-center gap-3">
-              <span className="text-white/60 text-sm font-mono">#{fIndex + 1}</span>
-              <input
-                type="text"
-                value={feature.name}
-                onChange={(e) => updateFeature(feature.id, 'name', e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                className="font-bold text-white bg-transparent border-b border-transparent hover:border-white/50 focus:border-white focus:outline-none"
-              />
-            </div>
-            <div className="flex items-center gap-4">
-              <span className="text-white">
-                <span className="text-white/60 text-sm">{calculateFeatureHours(feature)}h</span>
-                <span className="mx-2">•</span>
-                <span className="font-bold">€{fmt(calculateFeatureCost(feature) * (1 + margin/100))}</span>
-              </span>
-              {features.length > 1 && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); deleteFeature(feature.id); }}
-                  className="text-white/60 hover:text-white"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Feature Content */}
-          {expandedFeature === feature.id && (
-            <div className="p-4 space-y-4">
-              {/* Description */}
-              <div>
-                <label className={`block text-xs mb-1 ${labelText}`}>Description</label>
-                <input
-                  type="text"
-                  value={feature.description}
-                  onChange={(e) => updateFeature(feature.id, 'description', e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-lg text-sm ${inputBg}`}
-                  placeholder="Brief description of this feature..."
-                />
-              </div>
-
-              {/* Deliverables */}
-              <div>
-                <label className={`block text-xs mb-2 ${labelText}`}>Deliverables / Acceptance Criteria</label>
-                <div className="space-y-2">
-                  {feature.deliverables.map((deliverable, dIndex) => (
-                    <div key={dIndex} className="flex items-center gap-2">
-                      <span className={`text-emerald-500 font-bold`}>✓</span>
-                      <input
-                        type="text"
-                        value={deliverable}
-                        onChange={(e) => updateDeliverable(feature.id, dIndex, e.target.value)}
-                        className={`flex-1 px-3 py-2 border rounded-lg text-sm ${inputBg}`}
-                        placeholder="What will be delivered..."
-                      />
-                      <button
-                        onClick={() => deleteDeliverable(feature.id, dIndex)}
-                        className="p-1 text-gray-400 hover:text-red-500"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => addDeliverable(feature.id)}
-                    className={`text-sm flex items-center gap-1 ${darkMode ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-700'}`}
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add deliverable
-                  </button>
-                </div>
-              </div>
-
-              {/* Team Allocation */}
-              <div>
-                <label className={`block text-xs mb-2 ${labelText}`}>Team & Hours</label>
-                <div className="space-y-2">
-                  <div className={`grid grid-cols-12 gap-2 text-xs font-medium px-2 ${labelText}`}>
-                    <div className="col-span-5">Resource</div>
-                    <div className="col-span-2 text-right">Rate/hr</div>
-                    <div className="col-span-2 text-right">Hours</div>
-                    <div className="col-span-3 text-right">Cost</div>
-                  </div>
-                  
-                  {feature.team.map((member) => (
-                    <div key={member.id} className={`grid grid-cols-12 gap-2 items-center rounded-lg p-2 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
-                      <div className="col-span-5">
-                        <input
-                          type="text"
-                          value={member.name}
-                          onChange={(e) => updateTeamMember(feature.id, member.id, 'name', e.target.value)}
-                          className={`w-full px-2 py-1 text-sm border rounded ${inputBg}`}
-                          placeholder="Role..."
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <div className="flex items-center justify-end gap-1">
-                          <span className={`text-xs ${labelText}`}>€</span>
-                          <input
-                            type="number"
-                            value={member.rate}
-                            onChange={(e) => updateTeamMember(feature.id, member.id, 'rate', e.target.value)}
-                            className={`w-14 px-2 py-1 text-sm border rounded text-right ${inputBg}`}
-                          />
-                        </div>
-                      </div>
-                      <div className="col-span-2">
-                        <input
-                          type="number"
-                          value={member.hours}
-                          onChange={(e) => updateTeamMember(feature.id, member.id, 'hours', e.target.value)}
-                          className={`w-full px-2 py-1 text-sm border rounded text-right ${inputBg}`}
-                        />
-                      </div>
-                      <div className="col-span-3 flex items-center justify-end gap-2">
-                        <span className={`text-sm font-medium ${cardText}`}>€{fmt(member.hours * member.rate)}</span>
-                        {feature.team.length > 1 && (
-                          <button
-                            onClick={() => deleteTeamMember(feature.id, member.id)}
-                            className="p-1 text-gray-400 hover:text-red-500"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  
-                  <button
-                    onClick={() => addTeamMember(feature.id)}
-                    className={`text-sm flex items-center gap-1 ${darkMode ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-700'}`}
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add team member
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
-
-      {/* Add Feature Button */}
-      <button
-        onClick={addFeature}
-        className={`w-full py-3 border-2 border-dashed rounded-xl flex items-center justify-center gap-2 ${
-          darkMode 
-            ? 'border-gray-600 text-gray-400 hover:border-indigo-500 hover:text-indigo-400' 
-            : 'border-gray-300 text-gray-500 hover:border-indigo-500 hover:text-indigo-600'
-        }`}
-      >
-        <Plus className="w-5 h-5" />
-        Add Feature
-      </button>
-
-      {/* Summary */}
-      <div className="bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl p-6 text-white">
-        <h2 className="text-sm font-semibold uppercase tracking-wide opacity-75 mb-4">Proposal Summary</h2>
-        
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-          <div className="bg-white/10 rounded-lg p-3 text-center">
-            <div className="text-xs opacity-75">Features</div>
-            <div className="text-2xl font-bold">{features.length}</div>
-          </div>
-          <div className="bg-white/10 rounded-lg p-3 text-center">
-            <div className="text-xs opacity-75">Total Hours</div>
-            <div className="text-2xl font-bold">{fmt(totalHours)}</div>
-          </div>
-          <div className="bg-white/10 rounded-lg p-3 text-center">
-            <div className="text-xs opacity-75">Est. Timeline</div>
-            <div className="text-2xl font-bold">{Math.ceil(totalHours / 40)}w</div>
-          </div>
-          <div className="bg-white/10 rounded-lg p-3 text-center">
-            <div className="text-xs opacity-75">Margin</div>
-            <div className="flex items-center justify-center gap-1">
-              <input
-                type="number"
-                value={margin}
-                onChange={(e) => setMargin(parseFloat(e.target.value) || 0)}
-                className="w-12 px-1 py-0.5 text-lg font-bold text-center bg-white/20 border border-white/30 rounded text-white"
-              />
-              <span className="text-lg font-bold">%</span>
-            </div>
-          </div>
-          <div className="bg-white/20 rounded-lg p-3 text-center">
-            <div className="text-xs opacity-75">Total Price</div>
-            <div className="text-2xl font-bold">€{fmt(totalPrice)}</div>
-          </div>
-        </div>
-
-        {/* Per-feature breakdown */}
-        <div className="space-y-2 mb-4">
-          {features.map((f, i) => (
-            <div key={f.id} className="flex justify-between items-center text-sm bg-white/10 rounded-lg px-3 py-2">
-              <span className="opacity-75">#{i + 1} {f.name}</span>
-              <span className="font-semibold">€{fmt(calculateFeatureCost(f) * (1 + margin/100))}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Notes */}
-      <div className={`rounded-xl p-4 shadow-sm border ${cardBg}`}>
-        <label className={`block text-xs mb-2 ${labelText}`}>Additional Notes (included in export)</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={3}
-          className={`w-full px-3 py-2 border rounded-lg text-sm ${inputBg}`}
-          placeholder="Payment terms, timeline notes, exclusions..."
-        />
-      </div>
-
-      {/* Actions */}
-      <div className={`rounded-xl p-4 shadow-sm border ${cardBg}`}>
-        <div className="flex flex-wrap gap-3 justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className={`text-sm ${labelText}`}>
-              {clientName && <span className={cardText}><strong>{clientName}</strong> • </span>}
-              {features.length} feature{features.length !== 1 ? 's' : ''} • {fmt(totalHours)} hours • Valid until {new Date(validUntil).toLocaleDateString()}
-            </div>
-            {syncStatus === 'syncing' && (
-              <span className="flex items-center gap-1 text-xs text-blue-500">
-                <Cloud className="w-4 h-4 animate-pulse" />
-                Syncing...
-              </span>
-            )}
-            {syncStatus === 'synced' && (
-              <span className="flex items-center gap-1 text-xs text-green-500">
-                <Cloud className="w-4 h-4" />
-                Synced
-              </span>
-            )}
-            {syncStatus === 'error' && (
-              <span className="flex items-center gap-1 text-xs text-red-500">
-                <CloudOff className="w-4 h-4" />
-                Offline
-              </span>
-            )}
-          </div>
-          <button
-            onClick={() => setShowPreview(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-lg hover:opacity-90"
-          >
-            <FileText className="w-4 h-4" />
-            Preview Proposal
-          </button>
-        </div>
-      </div>
+      <h2 className={`text-xl font-bold mb-2 ${cardText}`}>Client Proposal Generator</h2>
+      <p className={`text-sm ${labelText}`}>Coming soon - Generate professional client proposals</p>
     </div>
   );
 }
 
-// Main App
-export default function CalculatorApp() {
-  const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('transactions');
+// Main App Component
+export default function App() {
   const [darkMode, setDarkMode] = useState(false);
-  
-  // Check for existing session on mount
+  const [session, setSession] = useState(null);
+  const [activeTab, setActiveTab] = useState('transaction');
+
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
+    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session));
     return () => subscription.unsubscribe();
   }, []);
 
@@ -3177,90 +1726,75 @@ export default function CalculatorApp() {
     setSession(null);
   };
 
-  const tabs = [
-    { id: 'transactions', name: 'Transaction Cost', icon: <CreditCard className="w-4 h-4" /> },
-    { id: 'features', name: 'Team/Time', icon: <Users className="w-4 h-4" /> },
-    { id: 'storypoints', name: 'Sprint Cost', icon: <Code className="w-4 h-4" /> },
-    { id: 'commercial', name: 'Quick Quote', icon: <Calculator className="w-4 h-4" /> },
-    { id: 'proposal', name: 'Client Proposal', icon: <Clock className="w-4 h-4" /> },
-  ];
-
-  if (loading) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${darkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
-        <div className={`text-lg ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Loading...</div>
-      </div>
-    );
-  }
-
   if (!session) {
     return <LoginPage onSuccess={setSession} darkMode={darkMode} />;
   }
 
+  const tabs = [
+    { id: 'transaction', name: 'Transaction Cost', icon: <CreditCard className="w-4 h-4" /> },
+    { id: 'feature', name: 'Team / Time', icon: <Clock className="w-4 h-4" /> },
+    { id: 'sprint', name: 'Sprint Cost', icon: <Code className="w-4 h-4" /> },
+    { id: 'commercial', name: 'Commercial Offer', icon: <Calculator className="w-4 h-4" /> },
+    { id: 'proposal', name: 'Client Proposal', icon: <FileText className="w-4 h-4" /> },
+  ];
+
+  const userEmail = session?.user?.email || '';
+
   return (
-    <div className={`min-h-screen p-6 ${darkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
-      <div className="max-w-3xl mx-auto">
+    <div className={`min-h-screen ${darkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
+      <div className="max-w-7xl mx-auto p-6">
         {/* Header */}
-        <div className={`rounded-xl p-6 shadow-sm border mb-6 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Calculator className={`w-8 h-8 ${darkMode ? 'text-indigo-400' : 'text-indigo-600'}`} />
-              <div>
-                <h1 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Unit Economics Calculator</h1>
-                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Transaction costs & feature development</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
-                {session.user.email}
-              </span>
-              <button
-                onClick={() => setDarkMode(!darkMode)}
-                className={`p-2 rounded-lg ${darkMode ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-              >
-                {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-              </button>
-              <button
-                onClick={handleLogout}
-                className={`text-sm flex items-center gap-1 px-3 py-1.5 rounded-lg ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-              >
-                <Lock className="w-4 h-4" />
-                Sign Out
-              </button>
-            </div>
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Unit Economics Calculator</h1>
+            <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Payment Gateway Cost Analysis</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{userEmail}</span>
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className={`p-2 rounded-lg transition-colors ${darkMode ? 'bg-gray-700 text-yellow-400 hover:bg-gray-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+            >
+              {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <button
+              onClick={handleLogout}
+              className={`px-4 py-2 rounded-lg text-sm font-medium ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+            >
+              Sign Out
+            </button>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className={`rounded-xl shadow-sm border overflow-hidden mb-6 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
-          <div className="flex">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                  activeTab === tab.id
-                    ? darkMode 
-                      ? 'text-indigo-400 bg-gray-700/50 border-b-2 border-indigo-400'
-                      : 'text-indigo-600 bg-indigo-50/50 border-b-2 border-indigo-600'
-                    : darkMode
-                      ? 'text-gray-400 hover:text-gray-300 hover:bg-gray-700/30'
-                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                {tab.icon}
-                <span>{tab.name}</span>
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Tab Navigation */}
+        <TabNav tabs={tabs} activeTab={activeTab} setActiveTab={setActiveTab} darkMode={darkMode} />
 
-        {/* Content */}
-        {activeTab === 'transactions' && <TransactionCostCalculator darkMode={darkMode} supabase={supabase} userEmail={session?.user?.email} />}
-        {activeTab === 'features' && <ProtectedTab darkMode={darkMode} tabName="Team/Time Calculator"><FeatureCostCalculator darkMode={darkMode} /></ProtectedTab>}
-        {activeTab === 'storypoints' && <ProtectedTab darkMode={darkMode} tabName="Sprint Cost Calculator"><StoryPointsCalculator darkMode={darkMode} /></ProtectedTab>}
-        {activeTab === 'commercial' && <ProtectedTab darkMode={darkMode} tabName="Quick Quote"><CommercialOfferCalculator darkMode={darkMode} /></ProtectedTab>}
-        {activeTab === 'proposal' && <ProtectedTab darkMode={darkMode} tabName="Client Proposal"><ClientProposalCalculator darkMode={darkMode} /></ProtectedTab>}
+        {/* Tab Content */}
+        <div className={`rounded-b-xl p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          {activeTab === 'transaction' && (
+            <TransactionCostCalculator darkMode={darkMode} supabase={supabase} userEmail={userEmail} />
+          )}
+          {activeTab === 'feature' && (
+            <ProtectedTab darkMode={darkMode} tabName="Team / Time Calculator">
+              <FeatureCostCalculator darkMode={darkMode} />
+            </ProtectedTab>
+          )}
+          {activeTab === 'sprint' && (
+            <ProtectedTab darkMode={darkMode} tabName="Sprint Cost Calculator">
+              <StoryPointsCalculator darkMode={darkMode} />
+            </ProtectedTab>
+          )}
+          {activeTab === 'commercial' && (
+            <ProtectedTab darkMode={darkMode} tabName="Commercial Offer Calculator">
+              <CommercialOfferCalculator darkMode={darkMode} />
+            </ProtectedTab>
+          )}
+          {activeTab === 'proposal' && (
+            <ProtectedTab darkMode={darkMode} tabName="Client Proposal Generator">
+              <ClientProposalCalculator darkMode={darkMode} />
+            </ProtectedTab>
+          )}
+        </div>
       </div>
     </div>
   );
