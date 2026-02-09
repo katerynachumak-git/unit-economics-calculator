@@ -176,7 +176,7 @@ function TabNav({ tabs, activeTab, setActiveTab, darkMode }) {
         <button
           key={tab.id}
           onClick={() => setActiveTab(tab.id)}
-          className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors
+          className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium transition-colors
             ${activeTab === tab.id 
               ? darkMode 
                 ? 'text-indigo-400 border-b-2 border-indigo-400 bg-gray-700/50' 
