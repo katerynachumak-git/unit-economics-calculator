@@ -475,6 +475,9 @@ function FlowVisualization({ operations, filterRate, approvalRate, transactions,
 function TransactionCostCalculator() {
   const [eurToUsd, setEurToUsd] = useState('1.08');
   const [activeTab, setActiveTab] = useState('costs'); // 'costs' or 'clients'
+  const [saveStatus, setSaveStatus] = useState('saved'); // 'saved', 'saving', 'error'
+  const saveTimeoutRef = useRef(null);
+  const isInitialLoad = useRef(true);
   
   // BASELINE
   const [baselineYear, setBaselineYear] = useState('2025');
@@ -700,6 +703,100 @@ function TransactionCostCalculator() {
         : [...prev, clientId]
     );
   };
+
+  // Load data from Supabase on mount
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('unit_economics')
+          .select('*')
+          .eq('id', 1)
+          .single();
+        
+        if (error && error.code !== 'PGRST116') {
+          console.error('Load error:', error);
+          return;
+        }
+        
+        if (data?.state) {
+          const state = data.state;
+          if (state.eurToUsd) setEurToUsd(state.eurToUsd);
+          if (state.baselineAnnualOperations) setBaselineAnnualOperations(state.baselineAnnualOperations);
+          if (state.baselineAnnualTransactions) setBaselineAnnualTransactions(state.baselineAnnualTransactions);
+          if (state.baselineApprovalRate) setBaselineApprovalRate(state.baselineApprovalRate);
+          if (state.baselineCosts) setBaselineCosts(state.baselineCosts);
+          if (state.annualCosts) setAnnualCosts(state.annualCosts);
+          if (state.monthlyData) setMonthlyData(state.monthlyData);
+          if (state.clients) setClients(state.clients);
+          if (state.clientMonthlyData) setClientMonthlyData(state.clientMonthlyData);
+          if (state.targetMargin) setTargetMargin(state.targetMargin);
+        }
+        
+        // Mark initial load complete
+        setTimeout(() => { isInitialLoad.current = false; }, 500);
+      } catch (err) {
+        console.error('Load error:', err);
+        isInitialLoad.current = false;
+      }
+    };
+    loadData();
+  }, []);
+
+  // Auto-save on changes (debounced)
+  useEffect(() => {
+    // Skip during initial load
+    if (isInitialLoad.current) return;
+    
+    // Clear any pending save
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    
+    setSaveStatus('saving');
+    
+    // Debounce save by 1 second
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const state = {
+          eurToUsd,
+          baselineAnnualOperations,
+          baselineAnnualTransactions,
+          baselineApprovalRate,
+          baselineCosts,
+          annualCosts,
+          monthlyData,
+          clients,
+          clientMonthlyData,
+          targetMargin,
+        };
+        
+        // Try update first
+        const { error: updateError } = await supabase
+          .from('unit_economics')
+          .update({ state, updated_at: new Date().toISOString() })
+          .eq('id', 1);
+        
+        // If no rows updated, insert
+        if (updateError) {
+          await supabase
+            .from('unit_economics')
+            .insert({ id: 1, state, updated_at: new Date().toISOString() });
+        }
+        
+        setSaveStatus('saved');
+      } catch (err) {
+        console.error('Save error:', err);
+        setSaveStatus('error');
+      }
+    }, 1000);
+    
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [eurToUsd, baselineAnnualOperations, baselineAnnualTransactions, baselineApprovalRate, baselineCosts, annualCosts, monthlyData, clients, clientMonthlyData, targetMargin]);
 
   // Helpers - parse strings to numbers
   const num = (val) => Number(val) || 0;
@@ -1093,8 +1190,24 @@ function TransactionCostCalculator() {
           {/* Auto-save bar */}
           <div className="rounded-xl px-3 py-2 shadow-sm border flex items-center justify-between bg-white border-gray-200">
             <div className="flex items-center gap-2">
-              <Cloud className="w-4 h-4 text-emerald-500" />
-              <span className="text-xs text-emerald-600">All changes saved</span>
+              {saveStatus === 'saving' && (
+                <>
+                  <Cloud className="w-4 h-4 text-amber-500 animate-pulse" />
+                  <span className="text-xs text-amber-600">Saving...</span>
+                </>
+              )}
+              {saveStatus === 'saved' && (
+                <>
+                  <Cloud className="w-4 h-4 text-emerald-500" />
+                  <span className="text-xs text-emerald-600">All changes saved</span>
+                </>
+              )}
+              {saveStatus === 'error' && (
+                <>
+                  <CloudOff className="w-4 h-4 text-red-500" />
+                  <span className="text-xs text-red-600">Save failed</span>
+                </>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500">EUR/USD:</span>
