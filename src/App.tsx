@@ -2417,11 +2417,11 @@ function TransactionCostCalculator() {
               </div>
               
               {/* Table Header */}
-              <div className="grid grid-cols-10 gap-2 p-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-600">
+              <div className="grid grid-cols-12 gap-2 p-3 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-600">
                 <div className="col-span-2">Client</div>
                 <div className="col-span-2 text-right">Txn Revenue</div>
-                <div className="col-span-3 text-right">Custom Development</div>
-                <div className="col-span-1 text-right">Total</div>
+                <div className="col-span-4 text-center">Custom Development</div>
+                <div className="col-span-2 text-right">Total</div>
                 <div className="col-span-2 text-right">Contribution</div>
               </div>
               
@@ -2439,7 +2439,7 @@ function TransactionCostCalculator() {
                 const detail = profitMonthVolume.clientDetails[index];
                 
                 return (
-                  <div key={client.id} className={`grid grid-cols-10 gap-2 p-3 border-b border-gray-100 hover:bg-gray-50 text-sm items-center ${!detail.isActive ? 'opacity-50' : ''}`}>
+                  <div key={client.id} className={`grid grid-cols-12 gap-2 p-3 border-b border-gray-100 hover:bg-gray-50 text-sm items-center ${!detail.isActive ? 'opacity-50' : ''}`}>
                     <div className="col-span-2">
                       <div className="font-medium text-gray-800">{client.name}</div>
                       <div className="text-xs text-gray-400">
@@ -2456,31 +2456,33 @@ function TransactionCostCalculator() {
                     <div className="col-span-2 text-right">
                       <div className={`font-medium ${txnRevenue > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>€{fmtNum(txnRevenue)}</div>
                     </div>
-                    <div className="col-span-3 text-right">
-                      <div className="flex items-center justify-end gap-3">
+                    <div className="col-span-4">
+                      <div className="flex items-center justify-center gap-2">
                         <div className="flex items-center gap-1">
                           <span className="text-xs text-gray-400">Rev:</span>
+                          <span className="text-xs text-purple-600">€</span>
                           <input 
                             type="number" 
                             value={customDev.revenue} 
                             onChange={(e) => setCustomDev(client.id, profitabilityMonth, 'revenue', e.target.value)}
-                            className="w-24 px-2 py-1 border rounded text-xs text-right bg-white border-gray-200"
+                            className="w-20 px-2 py-1 border rounded text-xs text-right bg-white border-gray-200"
                             placeholder="0"
                           />
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="text-xs text-gray-400">Cost:</span>
+                          <span className="text-xs text-gray-500">€</span>
                           <input 
                             type="number" 
                             value={customDev.cost} 
                             onChange={(e) => setCustomDev(client.id, profitabilityMonth, 'cost', e.target.value)}
-                            className="w-24 px-2 py-1 border rounded text-xs text-right bg-gray-50 border-gray-200 text-gray-500"
+                            className="w-20 px-2 py-1 border rounded text-xs text-right bg-gray-50 border-gray-200 text-gray-500"
                             placeholder="0"
                           />
                         </div>
                       </div>
                     </div>
-                    <div className="col-span-1 text-right">
+                    <div className="col-span-2 text-right">
                       <div className="font-bold text-gray-800">€{fmtNum(totalClientRevenue)}</div>
                     </div>
                     <div className="col-span-2 text-right">
@@ -2502,11 +2504,11 @@ function TransactionCostCalculator() {
               })}
               
               {/* Totals Row */}
-              <div className="grid grid-cols-10 gap-2 p-3 bg-purple-50 text-sm font-bold">
+              <div className="grid grid-cols-12 gap-2 p-3 bg-purple-50 text-sm font-bold">
                 <div className="col-span-2 text-gray-700">Total</div>
                 <div className="col-span-2 text-right text-emerald-600">€{fmtNum(profitTotalTxnRevenue)}</div>
-                <div className="col-span-3 text-right text-purple-600">€{fmtNum(profitTotalCustomRev)} rev / €{fmtNum(profitTotalCustomCost)} cost</div>
-                <div className="col-span-1 text-right text-gray-800">€{fmtNum(profitTotalRevenue)}</div>
+                <div className="col-span-4 text-center text-purple-600">€{fmtNum(profitTotalCustomRev)} rev / €{fmtNum(profitTotalCustomCost)} cost</div>
+                <div className="col-span-2 text-right text-gray-800">€{fmtNum(profitTotalRevenue)}</div>
                 <div className="col-span-2 text-right text-emerald-600">
                   €{fmtNum(clients.reduce((sum, c, i) => {
                     const m = profitClientMetrics[i];
@@ -4935,7 +4937,7 @@ export default function CalculatorApp() {
 
   return (
     <div className={`min-h-screen p-6 ${darkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className={`rounded-xl p-6 shadow-sm border mb-6 ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
           <div className="flex items-center justify-between">
