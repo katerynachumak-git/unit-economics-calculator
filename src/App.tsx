@@ -478,7 +478,7 @@ function TransactionCostCalculator() {
   
   // BASELINE
   const [baselineYear, setBaselineYear] = useState('2025');
-  const [show2025Section, setShow2025Section] = useState(false); // Collapsed by default
+  const [show2025Section, setShow2025Section] = useState(true); // Expanded by default
   const [baselineAnnualOperations, setBaselineAnnualOperations] = useState('48000000');
   const [baselineAnnualTransactions, setBaselineAnnualTransactions] = useState('45600000');
   const [baselineApprovalRate, setBaselineApprovalRate] = useState('79');
@@ -627,9 +627,67 @@ function TransactionCostCalculator() {
   
   // CLIENTS
   const [clients, setClients] = useState([
-    { id: 1, name: 'Client A', monthlyOperations: '4000000', monthlyTransactions: '3800000', approvalRate: '79', price: '0.01', pricingModel: 'perTransaction', fixedFeePerTxn: '0', oneTimeFee: '0', monthlyFee: '0', startDate: '2026-01-01', analyticsUrl: '', showAnalytics: false, providerAnalyticsUrl: '', showProviderAnalytics: false, customDevRevenue: '0', customDevCost: '0' },
-    { id: 2, name: 'Client B', monthlyOperations: '1000000', monthlyTransactions: '950000', approvalRate: '82', price: '0.015', pricingModel: 'perTransaction', fixedFeePerTxn: '0', oneTimeFee: '0', monthlyFee: '0', startDate: '2026-02-16', analyticsUrl: '', showAnalytics: false, providerAnalyticsUrl: '', showProviderAnalytics: false, customDevRevenue: '0', customDevCost: '0' },
+    { id: 1, name: 'Client A', startDate: '2026-01-01', analyticsUrl: '', providerAnalyticsUrl: '' },
+    { id: 2, name: 'Client B', startDate: '2026-02-16', analyticsUrl: '', providerAnalyticsUrl: '' },
   ]);
+  
+  // Client monthly data - stores month-specific values
+  // Key format: `${clientId}-${monthIndex}` e.g., "1-0" for Client 1, January
+  const [clientMonthlyData, setClientMonthlyData] = useState({
+    '1-0': { monthlyOperations: '4000000', monthlyTransactions: '3800000', approvalRate: '79', price: '0.01', pricingModel: 'perTransaction', fixedFeePerTxn: '0', oneTimeFee: '0', monthlyFee: '0', customDevRevenue: '0', customDevCost: '0' },
+    '2-1': { monthlyOperations: '1000000', monthlyTransactions: '950000', approvalRate: '82', price: '0.015', pricingModel: 'perTransaction', fixedFeePerTxn: '0', oneTimeFee: '0', monthlyFee: '0', customDevRevenue: '0', customDevCost: '0' },
+  });
+  
+  // Default values for new months
+  const defaultClientMonth = { monthlyOperations: '0', monthlyTransactions: '0', approvalRate: '79', price: '0.01', pricingModel: 'perTransaction', fixedFeePerTxn: '0', oneTimeFee: '0', monthlyFee: '0', customDevRevenue: '0', customDevCost: '0' };
+  
+  // Get client data for a specific month
+  const getClientMonth = (clientId, monthIndex) => {
+    const key = `${clientId}-${monthIndex}`;
+    return clientMonthlyData[key] || null;
+  };
+  
+  // Set client data for a specific month
+  const setClientMonth = (clientId, monthIndex, field, value) => {
+    const key = `${clientId}-${monthIndex}`;
+    setClientMonthlyData(prev => ({
+      ...prev,
+      [key]: { ...(prev[key] || defaultClientMonth), [field]: value }
+    }));
+  };
+  
+  // Initialize a month with default or copied data
+  const initClientMonth = (clientId, monthIndex, copyFrom = null) => {
+    const key = `${clientId}-${monthIndex}`;
+    let data = { ...defaultClientMonth };
+    
+    if (copyFrom !== null) {
+      const sourceKey = `${clientId}-${copyFrom}`;
+      const sourceData = clientMonthlyData[sourceKey];
+      if (sourceData) {
+        data = { ...sourceData, oneTimeFee: '0' }; // Don't copy one-time fees
+      }
+    }
+    
+    setClientMonthlyData(prev => ({ ...prev, [key]: data }));
+  };
+  
+  // Copy data from previous month for all clients
+  const copyFromPreviousMonth = (monthIndex) => {
+    if (monthIndex === 0) return;
+    const prevMonth = monthIndex - 1;
+    
+    const newData = { ...clientMonthlyData };
+    clients.forEach(client => {
+      const prevKey = `${client.id}-${prevMonth}`;
+      const currKey = `${client.id}-${monthIndex}`;
+      if (clientMonthlyData[prevKey] && !clientMonthlyData[currKey]) {
+        newData[currKey] = { ...clientMonthlyData[prevKey], oneTimeFee: '0' };
+      }
+    });
+    setClientMonthlyData(newData);
+  };
+  
   const [expandedClients, setExpandedClients] = useState([1]); // First client expanded by default
   const [expandedTiers, setExpandedTiers] = useState(null); // Track which cost has tiers expanded
   const [targetMargin, setTargetMargin] = useState('30');
@@ -759,9 +817,10 @@ function TransactionCostCalculator() {
     
     clients.forEach(c => {
       const factor = getClientMonthFactor(c, monthIndex);
-      const clientOps = Math.round(num(c.monthlyOperations) * factor);
-      const clientTxn = Math.round(num(c.monthlyTransactions) * factor);
-      const clientSuccessful = Math.round(clientTxn * num(c.approvalRate) / 100);
+      const monthData = getClientMonth(c.id, monthIndex) || defaultClientMonth;
+      const clientOps = Math.round(num(monthData.monthlyOperations) * factor);
+      const clientTxn = Math.round(num(monthData.monthlyTransactions) * factor);
+      const clientSuccessful = Math.round(clientTxn * num(monthData.approvalRate) / 100);
       
       ops += clientOps;
       txn += clientTxn;
@@ -769,12 +828,14 @@ function TransactionCostCalculator() {
       
       clientDetails.push({
         ...c,
+        ...monthData, // Include month-specific data
         factor,
         activeOps: clientOps,
         activeTxn: clientTxn,
         activeSuccessful: clientSuccessful,
         isActive: factor > 0,
-        isPartial: factor > 0 && factor < 1
+        isPartial: factor > 0 && factor < 1,
+        hasMonthData: !!getClientMonth(c.id, monthIndex)
       });
     });
     
@@ -887,21 +948,23 @@ function TransactionCostCalculator() {
   
   // CLIENT METRICS
   const clientMetrics = clients.map((client) => {
-    const monthlyOps = num(client.monthlyOperations);
-    const monthlyTxn = num(client.monthlyTransactions);
-    const approval = num(client.approvalRate);
-    const price = num(client.price);
-    const fixedFeePerTxn = num(client.fixedFeePerTxn);
-    const oneTimeFee = num(client.oneTimeFee);
-    const monthlyFee = num(client.monthlyFee);
-    const margin = num(targetMargin);
-    
-    // Get proration factor for selected month
+    // Get proration factor and month-specific data for selected month
     const proratedData = selectedMonthVolume.clientDetails.find(c => c.id === client.id);
     const factor = proratedData?.factor || 0;
     const proratedOps = proratedData?.activeOps || 0;
     const proratedTxn = proratedData?.activeTxn || 0;
     const proratedSuccessful = proratedData?.activeSuccessful || 0;
+    
+    // Use month-specific data (from proratedData which includes monthData)
+    const monthlyOps = num(proratedData?.monthlyOperations || 0);
+    const monthlyTxn = num(proratedData?.monthlyTransactions || 0);
+    const approval = num(proratedData?.approvalRate || 79);
+    const price = num(proratedData?.price || 0);
+    const pricingModel = proratedData?.pricingModel || 'perTransaction';
+    const fixedFeePerTxn = num(proratedData?.fixedFeePerTxn || 0);
+    const oneTimeFee = num(proratedData?.oneTimeFee || 0);
+    const monthlyFee = num(proratedData?.monthlyFee || 0);
+    const margin = num(targetMargin);
     
     const filterRate = monthlyOps > 0 ? (monthlyTxn / monthlyOps) * 100 : 0;
     const monthlySuccessful = Math.round(monthlyTxn * approval / 100);
@@ -911,9 +974,9 @@ function TransactionCostCalculator() {
     // Revenue calculation
     // 1. Variable fee based on pricing model
     let variableRevenue = 0;
-    if (client.pricingModel === 'perOperation') variableRevenue = price * proratedOps;
-    else if (client.pricingModel === 'perTransaction') variableRevenue = price * proratedTxn;
-    else if (client.pricingModel === 'perSuccessful') variableRevenue = price * proratedSuccessful;
+    if (pricingModel === 'perOperation') variableRevenue = price * proratedOps;
+    else if (pricingModel === 'perTransaction') variableRevenue = price * proratedTxn;
+    else if (pricingModel === 'perSuccessful') variableRevenue = price * proratedSuccessful;
     
     // 2. Fixed fee per transaction (charged on successful transactions)
     const txnFeeRevenue = fixedFeePerTxn * proratedSuccessful;
@@ -945,6 +1008,7 @@ function TransactionCostCalculator() {
       proratedSuccessful,
       factor,
       isActive: factor > 0,
+      hasMonthData: proratedData?.hasMonthData || false,
       marginalCostPerOperation,
       variableRevenue,
       txnFeeRevenue,
@@ -960,15 +1024,36 @@ function TransactionCostCalculator() {
     };
   });
 
-  const totalNewVolume = clients.reduce((sum, c) => sum + num(c.monthlyOperations), 0);
+  const totalNewVolume = totalClientOperations; // Use the already calculated value from getMonthlyVolume
   const totalRevenue = clientMetrics.reduce((sum, m) => sum + m.revenue, 0);
   const totalCost = clientMetrics.reduce((sum, m) => sum + m.cost, 0);
   const totalProfit = clientMetrics.reduce((sum, m) => sum + m.profit, 0);
   const totalMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
 
-  const addClient = () => setClients([...clients, { id: Date.now(), name: `Client ${String.fromCharCode(65 + clients.length)}`, monthlyOperations: '2000000', monthlyTransactions: '1900000', approvalRate: '79', price: '0.01', pricingModel: 'perTransaction', fixedFeePerTxn: '0', oneTimeFee: '0', monthlyFee: '0', startDate: '2026-01-01', analyticsUrl: '', showAnalytics: false, providerAnalyticsUrl: '', showProviderAnalytics: false, customDevRevenue: '0', customDevCost: '0' }]);
+  const addClient = () => {
+    const newId = Date.now();
+    const newName = `Client ${String.fromCharCode(65 + clients.length)}`;
+    setClients([...clients, { id: newId, name: newName, startDate: '2026-01-01', analyticsUrl: '', providerAnalyticsUrl: '' }]);
+    // Initialize first month with default data
+    setClientMonthlyData(prev => ({
+      ...prev,
+      [`${newId}-${selectedMonth}`]: { ...defaultClientMonth }
+    }));
+  };
   const updateClient = (id, field, value) => setClients(clients.map(c => c.id === id ? { ...c, [field]: value } : c));
-  const removeClient = (id) => { if (clients.length > 1) setClients(clients.filter(c => c.id !== id)); };
+  const removeClient = (id) => { 
+    if (clients.length > 1) {
+      setClients(clients.filter(c => c.id !== id));
+      // Also remove all monthly data for this client
+      setClientMonthlyData(prev => {
+        const newData = { ...prev };
+        Object.keys(newData).forEach(key => {
+          if (key.startsWith(`${id}-`)) delete newData[key];
+        });
+        return newData;
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -1044,16 +1129,26 @@ function TransactionCostCalculator() {
             {show2025Section && (
             <div className="p-4 pt-0 border-t border-gray-100">
             
-            {/* Volume inputs - locked */}
+            {/* Volume inputs - editable */}
             <div className="grid grid-cols-4 gap-3 mb-3">
               <div>
                 <label className="block text-xs mb-1 text-gray-500">Annual Operations</label>
-                <div className="w-full px-2 py-1 border rounded-lg text-sm bg-gray-100 border-gray-200 text-gray-600">{fmtNum(baselineAnnualOperations)}</div>
+                <input 
+                  type="text" 
+                  value={baselineAnnualOperations} 
+                  onChange={(e) => setBaselineAnnualOperations(e.target.value)}
+                  className="w-full px-2 py-1 border rounded-lg text-sm bg-white border-gray-200"
+                />
                 <div className="text-xs text-gray-400 mt-0.5">{fmtM(baselineMonthlyOperations)}/mo</div>
               </div>
               <div>
                 <label className="block text-xs mb-1 text-gray-500">Annual Transactions</label>
-                <div className="w-full px-2 py-1 border rounded-lg text-sm bg-gray-100 border-gray-200 text-gray-600">{fmtNum(baselineAnnualTransactions)}</div>
+                <input 
+                  type="text" 
+                  value={baselineAnnualTransactions} 
+                  onChange={(e) => setBaselineAnnualTransactions(e.target.value)}
+                  className="w-full px-2 py-1 border rounded-lg text-sm bg-white border-gray-200"
+                />
                 <div className="flex items-center gap-1 mt-0.5">
                   <span className="text-xs text-indigo-500">{fmt(baselineFilterRate, 0)}% of operations</span>
                   <button 
@@ -1087,7 +1182,12 @@ function TransactionCostCalculator() {
               </div>
               <div>
                 <label className="block text-xs mb-1 text-gray-500">Provider Approval Rate %</label>
-                <div className="w-full px-2 py-1 border rounded-lg text-sm bg-gray-100 border-gray-200 text-gray-600">{baselineApprovalRate}%</div>
+                <input 
+                  type="text" 
+                  value={baselineApprovalRate} 
+                  onChange={(e) => setBaselineApprovalRate(e.target.value)}
+                  className="w-full px-2 py-1 border rounded-lg text-sm bg-white border-gray-200"
+                />
                 <div className="flex items-center gap-1 mt-0.5">
                   <span className="text-xs text-amber-500">{fmt(100 - num(baselineApprovalRate), 0)}% declined</span>
                   <button 
@@ -1880,6 +1980,54 @@ function TransactionCostCalculator() {
             )}
           </div>
 
+          {/* MONTH SELECTOR FOR CLIENTS */}
+          <div className="rounded-xl p-4 shadow-sm border bg-white border-emerald-200">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center bg-emerald-100">
+                  <span className="text-emerald-600 text-sm">📅</span>
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-gray-800">{MONTHS[selectedMonth]} 2026 Client Data</h2>
+                  <p className="text-xs text-gray-500">Enter volumes and pricing for each month</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {selectedMonth > 0 && (
+                  <button 
+                    onClick={() => copyFromPreviousMonth(selectedMonth)}
+                    className="flex items-center gap-1 px-2 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-xs hover:bg-indigo-200"
+                  >
+                    📋 Copy from {MONTHS[selectedMonth - 1]}
+                  </button>
+                )}
+              </div>
+            </div>
+            
+            {/* Month tabs */}
+            <div className="flex gap-1 flex-wrap">
+              {MONTHS.map((month, i) => {
+                const hasData = clients.some(c => getClientMonth(c.id, i));
+                return (
+                  <button 
+                    key={month} 
+                    onClick={() => setSelectedMonth(i)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors relative ${
+                      selectedMonth === i 
+                        ? 'bg-emerald-600 text-white' 
+                        : hasData 
+                          ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' 
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    {month}
+                    {hasData && selectedMonth !== i && <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-500 rounded-full" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* CLIENTS */}
           <div className="rounded-xl p-4 shadow-sm border bg-white border-emerald-200">
             <div className="flex items-center justify-between mb-3">
@@ -1913,13 +2061,8 @@ function TransactionCostCalculator() {
               const clientProfit = (metrics.revenue || 0) - clientCost;
               const clientMargin = (metrics.revenue || 0) > 0 ? (clientProfit / (metrics.revenue || 1)) * 100 : 0;
               
-              // Border color based on status
-              const borderColor = isActive 
-                ? (isPartial ? 'border-l-amber-400' : 'border-l-emerald-500')
-                : 'border-l-gray-300';
-              
               return (
-                <div key={client.id} className={`rounded-lg border mb-3 overflow-hidden border-l-4 ${borderColor} border-gray-200 bg-white`}>
+                <div key={client.id} className="rounded-lg border mb-3 overflow-hidden border-l-4 border-l-emerald-500 border-gray-200 bg-white">
                   {/* Collapsed Header - Always Visible */}
                   <div 
                     className="p-3 cursor-pointer hover:bg-gray-50 transition-colors"
@@ -1928,7 +2071,7 @@ function TransactionCostCalculator() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         {isExpanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-                        <Users className={`w-4 h-4 ${isActive ? 'text-emerald-600' : 'text-gray-500'}`} />
+                        <Users className="w-4 h-4 text-emerald-600" />
                         <span className="font-medium text-sm">{client.name}</span>
                         {isActive ? (
                           isPartial ? (
@@ -1941,8 +2084,8 @@ function TransactionCostCalculator() {
                             </span>
                           )
                         ) : (
-                          <span className="px-2 py-0.5 bg-slate-500 text-white rounded text-xs font-medium">
-                            📅 Starts {client.startDate || '2026-01-01'}
+                          <span className="px-2 py-0.5 bg-slate-400 text-white rounded text-xs font-medium">
+                            Not active in {MONTHS[selectedMonth]}
                           </span>
                         )}
                       </div>
@@ -1953,6 +2096,21 @@ function TransactionCostCalculator() {
                           <span className={`font-bold ${clientProfit >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>€{fmtNum(clientProfit)} profit</span>
                           <span className={`font-bold ${clientMargin >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>{fmt(clientMargin, 1)}%</span>
                         </div>
+                        {/* Start date in header */}
+                        <div className="flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded-lg" onClick={(e) => e.stopPropagation()}>
+                          <span className="text-xs text-blue-600 font-medium">Start:</span>
+                          <input 
+                            type="date" 
+                            value={client.startDate || '2026-01-01'} 
+                            onChange={(e) => updateClient(client.id, 'startDate', e.target.value)}
+                            className="px-1 py-0.5 border-0 bg-transparent text-xs text-blue-700 font-medium focus:outline-none"
+                          />
+                        </div>
+                        {clients.length > 1 && (
+                          <button onClick={(e) => { e.stopPropagation(); removeClient(client.id); }} className="p-1 text-gray-400 hover:text-red-500">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1960,102 +2118,69 @@ function TransactionCostCalculator() {
                   {/* Expanded Content */}
                   {isExpanded && (
                     <div className="px-3 pb-3 border-t border-gray-200">
-                      {/* Header row with date and delete */}
+                      {/* Header row with name edit */}
                       <div className="flex items-center justify-between py-2">
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-400">Name:</span>
                           <input type="text" value={client.name} onChange={(e) => updateClient(client.id, 'name', e.target.value)} onClick={(e) => e.stopPropagation()} className="px-2 py-1 border rounded font-medium w-28 text-xs bg-white border-gray-200" />
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs text-gray-400">Start:</span>
-                            <input 
-                              type="date" 
-                              value={client.startDate || '2026-01-01'} 
-                              onChange={(e) => updateClient(client.id, 'startDate', e.target.value)}
-                              onClick={(e) => e.stopPropagation()}
-                              className="px-1 py-0.5 border rounded text-xs bg-white border-gray-200"
-                            />
-                          </div>
-                          {clients.length > 1 && <button onClick={(e) => { e.stopPropagation(); removeClient(client.id); }} className="p-1 text-gray-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button>}
+                        <div className="text-xs text-gray-400">
+                          {MONTHS[selectedMonth]} 2026 data
                         </div>
                       </div>
+                  
+                  {/* Month data status */}
+                  {!metrics.hasMonthData && metrics.isActive && (
+                    <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between">
+                      <span className="text-xs text-amber-700">⚠️ No data for {MONTHS[selectedMonth]} yet</span>
+                      <button 
+                        onClick={() => initClientMonth(client.id, selectedMonth, selectedMonth > 0 ? selectedMonth - 1 : null)}
+                        className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs hover:bg-amber-200"
+                      >
+                        {selectedMonth > 0 ? `Copy from ${MONTHS[selectedMonth - 1]}` : 'Initialize'}
+                      </button>
+                    </div>
+                  )}
                   
                   {/* Client Volume - Input Row */}
                   <div className="mb-2">
                     <div className="grid grid-cols-4 gap-3 mb-3">
                       <div>
                         <div className="text-xs text-gray-500 mb-1">Monthly Operations</div>
-                        <input type="number" value={client.monthlyOperations} onChange={(e) => updateClient(client.id, 'monthlyOperations', e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 border-gray-200" />
-                        <div className="text-xs text-gray-400 mt-1">{fmtM(num(client.monthlyOperations))}/mo</div>
+                        <input 
+                          type="number" 
+                          value={getClientMonth(client.id, selectedMonth)?.monthlyOperations || ''} 
+                          onChange={(e) => setClientMonth(client.id, selectedMonth, 'monthlyOperations', e.target.value)} 
+                          placeholder="0"
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 border-gray-200" 
+                        />
+                        <div className="text-xs text-gray-400 mt-1">{fmtM(num(getClientMonth(client.id, selectedMonth)?.monthlyOperations))}/mo</div>
                       </div>
                       <div>
                         <div className="text-xs text-gray-500 mb-1">Monthly Transactions</div>
-                        <input type="number" value={client.monthlyTransactions} onChange={(e) => updateClient(client.id, 'monthlyTransactions', e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 border-gray-200" />
+                        <input 
+                          type="number" 
+                          value={getClientMonth(client.id, selectedMonth)?.monthlyTransactions || ''} 
+                          onChange={(e) => setClientMonth(client.id, selectedMonth, 'monthlyTransactions', e.target.value)} 
+                          placeholder="0"
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 border-gray-200" 
+                        />
                         <div className="flex items-center gap-1 mt-1">
                           <span className="text-xs text-blue-500">{fmt(metrics.filterRate || 0, 0)}% of operations</span>
-                          <button 
-                            onClick={() => updateClient(client.id, 'showAnalytics', !client.showAnalytics)}
-                            className="text-gray-400 hover:text-blue-500 transition-colors"
-                            title="Decline analytics"
-                          >
-                            {client.showAnalytics ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                          </button>
                         </div>
-                        {client.showAnalytics && (
-                          <div className="mt-1 p-2 bg-red-50 rounded border border-red-100">
-                            <div className="flex items-center gap-1 mb-1">
-                              <span className="text-xs text-red-600 font-medium">{fmt(100 - (metrics.filterRate || 0), 0)}% filtered</span>
-                              <ExternalLink className="w-3 h-3 text-red-400" />
-                            </div>
-                            <input 
-                              type="url" 
-                              value={client.analyticsUrl || ''} 
-                              onChange={(e) => updateClient(client.id, 'analyticsUrl', e.target.value)}
-                              placeholder="Analytics report URL..."
-                              className="w-full px-2 py-1 text-xs border rounded bg-white border-red-200 placeholder-gray-400"
-                            />
-                            {client.analyticsUrl && (
-                              <a href={client.analyticsUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-red-600 hover:underline flex items-center gap-1 mt-1">
-                                View decline report <ExternalLink className="w-3 h-3" />
-                              </a>
-                            )}
-                          </div>
-                        )}
                       </div>
                       <div>
                         <div className="text-xs text-gray-500 mb-1">Provider Approval Rate %</div>
-                        <input type="number" value={client.approvalRate} onChange={(e) => updateClient(client.id, 'approvalRate', e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 border-gray-200" />
+                        <input 
+                          type="number" 
+                          value={getClientMonth(client.id, selectedMonth)?.approvalRate || ''} 
+                          onChange={(e) => setClientMonth(client.id, selectedMonth, 'approvalRate', e.target.value)} 
+                          placeholder="79"
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50 border-gray-200" 
+                        />
                         <div className="flex items-center gap-1 mt-1">
-                          <span className="text-xs text-amber-500">{fmt(100 - num(client.approvalRate), 0)}% declined</span>
-                          <button 
-                            onClick={() => updateClient(client.id, 'showProviderAnalytics', !client.showProviderAnalytics)}
-                            className="text-gray-400 hover:text-amber-500 transition-colors"
-                            title="Provider decline analytics"
-                          >
-                            {client.showProviderAnalytics ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                          </button>
+                          <span className="text-xs text-amber-500">{fmt(100 - num(getClientMonth(client.id, selectedMonth)?.approvalRate || 79), 0)}% declined</span>
                         </div>
-                        {client.showProviderAnalytics && (
-                          <div className="mt-1 p-2 bg-amber-50 rounded border border-amber-100">
-                            <div className="flex items-center gap-1 mb-1">
-                              <span className="text-xs text-amber-600 font-medium">{fmt(100 - num(client.approvalRate), 0)}% provider declined</span>
-                              <ExternalLink className="w-3 h-3 text-amber-400" />
-                            </div>
-                            <input 
-                              type="url" 
-                              value={client.providerAnalyticsUrl || ''} 
-                              onChange={(e) => updateClient(client.id, 'providerAnalyticsUrl', e.target.value)}
-                              placeholder="Provider analytics URL..."
-                              className="w-full px-2 py-1 text-xs border rounded bg-white border-amber-200 placeholder-gray-400"
-                            />
-                            {client.providerAnalyticsUrl && (
-                              <a href={client.providerAnalyticsUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-amber-600 hover:underline flex items-center gap-1 mt-1">
-                                View provider report <ExternalLink className="w-3 h-3" />
-                              </a>
-                            )}
-                          </div>
-                        )}
                       </div>
                       <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
                         <div className="text-xs text-emerald-600 font-medium">Successful</div>
@@ -2071,7 +2196,7 @@ function TransactionCostCalculator() {
                             <CreditCard className="w-3 h-3" />
                             <span>Operations</span>
                           </div>
-                          <div className="text-2xl font-bold text-indigo-700">{fmtM(num(client.monthlyOperations))}</div>
+                          <div className="text-2xl font-bold text-indigo-700">{fmtM(num(getClientMonth(client.id, selectedMonth)?.monthlyOperations))}</div>
                           <div className="text-xs text-gray-500">all merchant requests</div>
                         </div>
                         
@@ -2087,14 +2212,14 @@ function TransactionCostCalculator() {
                             <Filter className="w-3 h-3" />
                             <span>Transactions</span>
                           </div>
-                          <div className="text-2xl font-bold text-indigo-700">{fmtM(num(client.monthlyTransactions))}</div>
+                          <div className="text-2xl font-bold text-indigo-700">{fmtM(num(getClientMonth(client.id, selectedMonth)?.monthlyTransactions))}</div>
                           <div className="text-xs text-gray-500">sent to provider</div>
                         </div>
                         
                         <div className="flex flex-col items-center gap-1">
                           <ArrowRight className="w-5 h-5 text-gray-300" />
                           <span className="px-2 py-0.5 bg-amber-100 text-amber-600 rounded text-xs font-medium">
-                            {fmt(num(client.approvalRate), 0)}% approved
+                            {fmt(num(getClientMonth(client.id, selectedMonth)?.approvalRate || 79), 0)}% approved
                           </span>
                         </div>
                         
@@ -2112,22 +2237,40 @@ function TransactionCostCalculator() {
 
                   {/* Pricing Section */}
                   <div className="mb-2 p-3 bg-white rounded-lg border border-gray-200">
-                    <div className="text-xs font-semibold text-gray-600 mb-2">💰 Pricing</div>
+                    <div className="text-xs font-semibold text-gray-600 mb-2">💰 Pricing for {MONTHS[selectedMonth]}</div>
                     <div className="grid grid-cols-2 gap-3">
                       {/* Left column - Variable pricing */}
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
-                          <select value={client.pricingModel} onChange={(e) => updateClient(client.id, 'pricingModel', e.target.value)} className="px-2 py-1 border rounded text-xs bg-white border-gray-200">
+                          <select 
+                            value={getClientMonth(client.id, selectedMonth)?.pricingModel || 'perTransaction'} 
+                            onChange={(e) => setClientMonth(client.id, selectedMonth, 'pricingModel', e.target.value)} 
+                            className="px-2 py-1 border rounded text-xs bg-white border-gray-200"
+                          >
                             <option value="perTransaction">Per Transaction</option>
                             <option value="perSuccessful">Per Successful</option>
                           </select>
                           <span className="text-xs text-gray-400">€</span>
-                          <input type="number" step="0.0001" value={client.price} onChange={(e) => updateClient(client.id, 'price', e.target.value)} className="w-20 px-2 py-1 border rounded text-xs bg-white border-gray-200" />
+                          <input 
+                            type="number" 
+                            step="0.0001" 
+                            value={getClientMonth(client.id, selectedMonth)?.price || ''} 
+                            onChange={(e) => setClientMonth(client.id, selectedMonth, 'price', e.target.value)} 
+                            placeholder="0.01"
+                            className="w-20 px-2 py-1 border rounded text-xs bg-white border-gray-200" 
+                          />
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-500 w-28">+ Fixed/success:</span>
                           <span className="text-xs text-gray-400">€</span>
-                          <input type="number" step="0.01" value={client.fixedFeePerTxn} onChange={(e) => updateClient(client.id, 'fixedFeePerTxn', e.target.value)} className="w-20 px-2 py-1 border rounded text-xs bg-white border-gray-200" />
+                          <input 
+                            type="number" 
+                            step="0.01" 
+                            value={getClientMonth(client.id, selectedMonth)?.fixedFeePerTxn || ''} 
+                            onChange={(e) => setClientMonth(client.id, selectedMonth, 'fixedFeePerTxn', e.target.value)} 
+                            placeholder="0"
+                            className="w-20 px-2 py-1 border rounded text-xs bg-white border-gray-200" 
+                          />
                         </div>
                       </div>
                       {/* Right column - Fixed fees */}
@@ -2135,12 +2278,26 @@ function TransactionCostCalculator() {
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-500 w-24">Monthly fee:</span>
                           <span className="text-xs text-gray-400">€</span>
-                          <input type="number" step="1" value={client.monthlyFee} onChange={(e) => updateClient(client.id, 'monthlyFee', e.target.value)} className="w-24 px-2 py-1 border rounded text-xs bg-white border-gray-200" />
+                          <input 
+                            type="number" 
+                            step="1" 
+                            value={getClientMonth(client.id, selectedMonth)?.monthlyFee || ''} 
+                            onChange={(e) => setClientMonth(client.id, selectedMonth, 'monthlyFee', e.target.value)} 
+                            placeholder="0"
+                            className="w-24 px-2 py-1 border rounded text-xs bg-white border-gray-200" 
+                          />
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-500 w-24">One-time fee:</span>
                           <span className="text-xs text-gray-400">€</span>
-                          <input type="number" step="1" value={client.oneTimeFee} onChange={(e) => updateClient(client.id, 'oneTimeFee', e.target.value)} className="w-24 px-2 py-1 border rounded text-xs bg-white border-gray-200" />
+                          <input 
+                            type="number" 
+                            step="1" 
+                            value={getClientMonth(client.id, selectedMonth)?.oneTimeFee || ''} 
+                            onChange={(e) => setClientMonth(client.id, selectedMonth, 'oneTimeFee', e.target.value)} 
+                            placeholder="0"
+                            className="w-24 px-2 py-1 border rounded text-xs bg-white border-gray-200" 
+                          />
                         </div>
                       </div>
                     </div>
@@ -2149,21 +2306,21 @@ function TransactionCostCalculator() {
                     <div className="mt-3 pt-3 border-t border-gray-100">
                       <div className="text-xs font-medium text-gray-500 mb-2">⚡ Marginal Cost (infra only) - price floor</div>
                       <div className="grid grid-cols-2 gap-2">
-                        <div className={`p-2 rounded-lg ${client.pricingModel === 'perTransaction' ? 'bg-violet-50 border border-violet-200' : 'bg-gray-50'}`}>
+                        <div className={`p-2 rounded-lg ${(getClientMonth(client.id, selectedMonth)?.pricingModel || 'perTransaction') === 'perTransaction' ? 'bg-violet-50 border border-violet-200' : 'bg-gray-50'}`}>
                           <div className="text-xs text-gray-500">Per Transaction</div>
                           <div className="text-sm font-bold text-violet-700">€{fmt(effectiveMarginalPerTxn, 4)}</div>
-                          {client.pricingModel === 'perTransaction' && (
-                            <div className={`text-xs mt-1 ${num(client.price) >= effectiveMarginalPerTxn ? 'text-emerald-600' : 'text-red-500'}`}>
-                              {num(client.price) >= effectiveMarginalPerTxn ? '✓' : '⚠'} Your price: €{fmt(num(client.price), 4)}
+                          {(getClientMonth(client.id, selectedMonth)?.pricingModel || 'perTransaction') === 'perTransaction' && (
+                            <div className={`text-xs mt-1 ${num(getClientMonth(client.id, selectedMonth)?.price) >= effectiveMarginalPerTxn ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {num(getClientMonth(client.id, selectedMonth)?.price) >= effectiveMarginalPerTxn ? '✓' : '⚠'} Your price: €{fmt(num(getClientMonth(client.id, selectedMonth)?.price), 4)}
                             </div>
                           )}
                         </div>
-                        <div className={`p-2 rounded-lg ${client.pricingModel === 'perSuccessful' ? 'bg-violet-50 border border-violet-200' : 'bg-gray-50'}`}>
+                        <div className={`p-2 rounded-lg ${(getClientMonth(client.id, selectedMonth)?.pricingModel || 'perTransaction') === 'perSuccessful' ? 'bg-violet-50 border border-violet-200' : 'bg-gray-50'}`}>
                           <div className="text-xs text-gray-500">Per Successful</div>
                           <div className="text-sm font-bold text-violet-700">€{fmt(effectiveMarginalPerSuccess, 4)}</div>
-                          {client.pricingModel === 'perSuccessful' && (
-                            <div className={`text-xs mt-1 ${num(client.price) >= effectiveMarginalPerSuccess ? 'text-emerald-600' : 'text-red-500'}`}>
-                              {num(client.price) >= effectiveMarginalPerSuccess ? '✓' : '⚠'} Your price: €{fmt(num(client.price), 4)}
+                          {(getClientMonth(client.id, selectedMonth)?.pricingModel || 'perTransaction') === 'perSuccessful' && (
+                            <div className={`text-xs mt-1 ${num(getClientMonth(client.id, selectedMonth)?.price) >= effectiveMarginalPerSuccess ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {num(getClientMonth(client.id, selectedMonth)?.price) >= effectiveMarginalPerSuccess ? '✓' : '⚠'} Your price: €{fmt(num(getClientMonth(client.id, selectedMonth)?.price), 4)}
                             </div>
                           )}
                         </div>
@@ -2214,10 +2371,10 @@ function TransactionCostCalculator() {
                         <div className="p-2 rounded-lg bg-gray-50 text-xs">
                           <div className="text-gray-500 mb-1">Minimum price to contribute (cover marginal cost):</div>
                           <div className="flex gap-4">
-                            <span className={client.pricingModel === 'perTransaction' ? 'font-bold text-violet-700' : 'text-gray-600'}>
+                            <span className={(getClientMonth(client.id, selectedMonth)?.pricingModel || 'perTransaction') === 'perTransaction' ? 'font-bold text-violet-700' : 'text-gray-600'}>
                               Per Txn: €{fmt(minPricePerTxn, 4)}
                             </span>
-                            <span className={client.pricingModel === 'perSuccessful' ? 'font-bold text-violet-700' : 'text-gray-600'}>
+                            <span className={(getClientMonth(client.id, selectedMonth)?.pricingModel || 'perTransaction') === 'perSuccessful' ? 'font-bold text-violet-700' : 'text-gray-600'}>
                               Per Success: €{fmt(minPricePerSuccess, 4)}
                             </span>
                           </div>
@@ -2225,6 +2382,35 @@ function TransactionCostCalculator() {
                       </div>
                         );
                       })()}
+                    </div>
+                    
+                    {/* Custom Development for this month */}
+                    <div className="mt-3 pt-3 border-t border-gray-100">
+                      <div className="text-xs font-medium text-gray-500 mb-2">🛠️ Custom Development ({MONTHS[selectedMonth]})</div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">Revenue:</span>
+                          <span className="text-xs text-gray-400">€</span>
+                          <input 
+                            type="number" 
+                            value={getClientMonth(client.id, selectedMonth)?.customDevRevenue || ''} 
+                            onChange={(e) => setClientMonth(client.id, selectedMonth, 'customDevRevenue', e.target.value)} 
+                            placeholder="0"
+                            className="w-24 px-2 py-1 border rounded text-xs bg-white border-gray-200" 
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">Cost:</span>
+                          <span className="text-xs text-gray-400">€</span>
+                          <input 
+                            type="number" 
+                            value={getClientMonth(client.id, selectedMonth)?.customDevCost || ''} 
+                            onChange={(e) => setClientMonth(client.id, selectedMonth, 'customDevCost', e.target.value)} 
+                            placeholder="0"
+                            className="w-24 px-2 py-1 border rounded text-xs bg-white border-gray-200" 
+                          />
+                        </div>
+                      </div>
                     </div>
                     
                     {/* Revenue breakdown */}
