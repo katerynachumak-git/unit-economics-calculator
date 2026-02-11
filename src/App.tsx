@@ -708,6 +708,7 @@ function TransactionCostCalculator() {
   useEffect(() => {
     const loadData = async () => {
       try {
+        console.log('Loading data from Supabase...');
         const { data, error } = await supabase
           .from('unit_economics')
           .select('*')
@@ -716,25 +717,32 @@ function TransactionCostCalculator() {
         
         if (error && error.code !== 'PGRST116') {
           console.error('Load error:', error);
+          isInitialLoad.current = false;
           return;
         }
         
         if (data?.state) {
+          console.log('Loaded data:', data.state);
           const state = data.state;
-          if (state.eurToUsd) setEurToUsd(state.eurToUsd);
-          if (state.baselineAnnualOperations) setBaselineAnnualOperations(state.baselineAnnualOperations);
-          if (state.baselineAnnualTransactions) setBaselineAnnualTransactions(state.baselineAnnualTransactions);
-          if (state.baselineApprovalRate) setBaselineApprovalRate(state.baselineApprovalRate);
-          if (state.baselineCosts) setBaselineCosts(state.baselineCosts);
-          if (state.annualCosts) setAnnualCosts(state.annualCosts);
-          if (state.monthlyData) setMonthlyData(state.monthlyData);
-          if (state.clients) setClients(state.clients);
-          if (state.clientMonthlyData) setClientMonthlyData(state.clientMonthlyData);
-          if (state.targetMargin) setTargetMargin(state.targetMargin);
+          if (state.eurToUsd !== undefined) setEurToUsd(state.eurToUsd);
+          if (state.baselineAnnualOperations !== undefined) setBaselineAnnualOperations(state.baselineAnnualOperations);
+          if (state.baselineAnnualTransactions !== undefined) setBaselineAnnualTransactions(state.baselineAnnualTransactions);
+          if (state.baselineApprovalRate !== undefined) setBaselineApprovalRate(state.baselineApprovalRate);
+          if (state.baselineCosts !== undefined) setBaselineCosts(state.baselineCosts);
+          if (state.annualCosts !== undefined) setAnnualCosts(state.annualCosts);
+          if (state.monthlyData !== undefined) setMonthlyData(state.monthlyData);
+          if (state.clients !== undefined) setClients(state.clients);
+          if (state.clientMonthlyData !== undefined) setClientMonthlyData(state.clientMonthlyData);
+          if (state.targetMargin !== undefined) setTargetMargin(state.targetMargin);
+        } else {
+          console.log('No saved data found, using defaults');
         }
         
-        // Mark initial load complete
-        setTimeout(() => { isInitialLoad.current = false; }, 500);
+        // Mark initial load complete after a delay to let state settle
+        setTimeout(() => { 
+          console.log('Initial load complete, enabling auto-save');
+          isInitialLoad.current = false; 
+        }, 1000);
       } catch (err) {
         console.error('Load error:', err);
         isInitialLoad.current = false;
@@ -746,7 +754,10 @@ function TransactionCostCalculator() {
   // Auto-save on changes (debounced)
   useEffect(() => {
     // Skip during initial load
-    if (isInitialLoad.current) return;
+    if (isInitialLoad.current) {
+      console.log('Skipping save - initial load in progress');
+      return;
+    }
     
     // Clear any pending save
     if (saveTimeoutRef.current) {
@@ -754,10 +765,12 @@ function TransactionCostCalculator() {
     }
     
     setSaveStatus('saving');
+    console.log('Scheduling save...');
     
     // Debounce save by 1 second
     saveTimeoutRef.current = setTimeout(async () => {
       try {
+        console.log('Executing save to Supabase...');
         const state = {
           eurToUsd,
           baselineAnnualOperations,
@@ -771,20 +784,18 @@ function TransactionCostCalculator() {
           targetMargin,
         };
         
-        // Try update first
-        const { error: updateError } = await supabase
+        // Use upsert - insert or update if exists
+        const { error } = await supabase
           .from('unit_economics')
-          .update({ state, updated_at: new Date().toISOString() })
-          .eq('id', 1);
+          .upsert({ id: 1, state, updated_at: new Date().toISOString() }, { onConflict: 'id' });
         
-        // If no rows updated, insert
-        if (updateError) {
-          await supabase
-            .from('unit_economics')
-            .insert({ id: 1, state, updated_at: new Date().toISOString() });
+        if (error) {
+          console.error('Save error:', error);
+          setSaveStatus('error');
+        } else {
+          console.log('Save successful!');
+          setSaveStatus('saved');
         }
-        
-        setSaveStatus('saved');
       } catch (err) {
         console.error('Save error:', err);
         setSaveStatus('error');
